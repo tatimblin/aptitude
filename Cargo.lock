@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "agents-test-harness"
+name = "agent-execution-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",

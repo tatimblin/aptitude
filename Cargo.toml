@@ -1,5 +1,5 @@
 [package]
-name = "agents-test-harness"
+name = "agent-execution-harness"
 version = "0.1.0"
 edition = "2021"
 description = "A test harness for validating AI agent behavior against steering guides"

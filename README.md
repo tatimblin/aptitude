@@ -14,7 +14,7 @@ cargo install agent-execution-harness
 
 ```bash
 # Once the tap is set up
-brew tap tatimblin/tap
+brew tap tristimb/tap
 brew install agent-execution-harness
 ```
 

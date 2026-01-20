@@ -130,7 +130,7 @@ jobs:
       - name: Clone or update Homebrew tap
         run: |
           if [ ! -d "homebrew-agent-execution-harness" ]; then
-            git clone https://github.com/tatimblin/homebrew-agent-execution-harness.git homebrew-agent-execution-harness
+            git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/tatimblin/homebrew-agent-execution-harness.git homebrew-agent-execution-harness
           fi
           cp agent-execution-harness.rb homebrew-agent-execution-harness/
 
@@ -139,6 +139,7 @@ jobs:
           cd homebrew-agent-execution-harness
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/tatimblin/homebrew-agent-execution-harness.git
           git add agent-execution-harness.rb
           git commit -m "Update agent-execution-harness to v${{ steps.version.outputs.version }}" || exit 0
           git push

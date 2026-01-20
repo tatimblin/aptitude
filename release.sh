@@ -67,7 +67,7 @@ rm agent-execution-harness.rb.bak
 
 # Commit changes
 echo -e "${YELLOW}Committing version bump...${NC}"
-git add Cargo.toml agent-execution-harness.rb
+git add Cargo.toml Cargo.lock agent-execution-harness.rb
 git commit -m "Bump version to $new_version"
 
 # Create and push tag

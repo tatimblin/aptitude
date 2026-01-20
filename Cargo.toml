@@ -3,6 +3,10 @@ name = "agents-test-harness"
 version = "0.1.0"
 edition = "2021"
 description = "A test harness for validating AI agent behavior against steering guides"
+license = "MIT"
+repository = "https://github.com/tatimblin/agent-execution-harness"
+keywords = ["testing", "ai", "agents", "claude"]
+categories = ["development-tools::testing"]
 
 [[bin]]
 name = "harness"

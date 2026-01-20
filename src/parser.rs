@@ -71,13 +71,19 @@ pub fn parse_jsonl_file(path: &Path) -> Result<Vec<ToolCall>> {
 }
 
 /// Parse JSONL content from a string (for incremental parsing)
+///
+/// Returns an empty Vec if parsing fails (e.g., for user messages with different format)
 pub fn parse_jsonl_line(line: &str) -> Result<Vec<ToolCall>> {
     if line.trim().is_empty() {
         return Ok(Vec::new());
     }
 
-    let entry: LogEntry = serde_json::from_str(line).context("Failed to parse JSON line")?;
-    Ok(extract_tool_calls(&entry).unwrap_or_default())
+    // Be lenient with parsing - user messages and other non-assistant messages
+    // may have different formats
+    match serde_json::from_str::<LogEntry>(line) {
+        Ok(entry) => Ok(extract_tool_calls(&entry).unwrap_or_default()),
+        Err(_) => Ok(Vec::new()),
+    }
 }
 
 fn extract_tool_calls(entry: &LogEntry) -> Option<Vec<ToolCall>> {

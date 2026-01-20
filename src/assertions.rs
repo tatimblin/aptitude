@@ -13,6 +13,9 @@ use crate::parser::ToolCall;
 pub struct Test {
     pub name: String,
     pub prompt: String,
+    /// Agent to use for this test (defaults to "claude").
+    #[serde(default)]
+    pub agent: Option<String>,
     pub assertions: Vec<Assertion>,
 }
 

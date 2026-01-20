@@ -75,17 +75,11 @@ echo -e "${YELLOW}Creating and pushing tag...${NC}"
 git tag "v$new_version"
 git push && git push --tags
 
-echo -e "${YELLOW}Waiting for GitHub Actions to build release...${NC}"
-echo "This will take a few minutes. Check: https://github.com/tatimblin/agent-execution-harness/actions"
+echo -e "${YELLOW}Waiting for GitHub Actions to complete...${NC}"
+echo "This will build binaries, create the release, and publish to crates.io"
+echo "Check progress: https://github.com/tatimblin/agent-execution-harness/actions"
 
-# Wait for release to be created (optional - user can skip)
-read -p "Press Enter when GitHub release is ready (or Ctrl+C to exit and publish to cargo manually)" -r
-
-# Publish to crates.io
-echo -e "${YELLOW}Publishing to crates.io...${NC}"
-cargo publish
-
-echo -e "${GREEN}✓ Released version $new_version!${NC}"
+echo -e "${GREEN}✓ Release $new_version started!${NC}"
 echo
 echo "Next steps for Homebrew:"
 echo "1. Wait for GitHub release to complete"

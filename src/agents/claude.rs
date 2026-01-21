@@ -19,20 +19,24 @@ impl ClaudeAdapter {
     pub fn new() -> Self {
         let mut mapping = ToolNameMapping::new();
 
-        // Map Claude's PascalCase tool names to canonical snake_case names
+        // Claude's tool names are already canonical - map to same names
+        // This preserves the actual tool names from JSONL output
         mapping
-            .add("Read", canonical::READ_FILE)
-            .add("Write", canonical::WRITE_FILE)
-            .add("Edit", canonical::EDIT_FILE)
-            .add("Bash", canonical::EXECUTE_COMMAND)
-            .add("Grep", canonical::SEARCH_FILES)
-            .add("Glob", canonical::GLOB_FILES)
+            .add("Read", canonical::READ)
+            .add("Write", canonical::WRITE)
+            .add("Edit", canonical::EDIT)
+            .add("Bash", canonical::BASH)
+            .add("Grep", canonical::GREP)
+            .add("Glob", canonical::GLOB)
             .add("LS", canonical::LIST_DIRECTORY)
             .add("AskUserQuestion", canonical::ASK_USER)
             .add("Task", canonical::TASK)
             .add("WebFetch", canonical::WEB_FETCH)
             .add("WebSearch", canonical::WEB_SEARCH)
-            .add("NotebookEdit", canonical::NOTEBOOK_EDIT);
+            .add("NotebookEdit", canonical::NOTEBOOK_EDIT)
+            .add("TodoWrite", canonical::TODO_WRITE)
+            .add("KillShell", canonical::KILL_SHELL)
+            .add("TaskOutput", canonical::TASK_OUTPUT);
 
         Self { mapping }
     }

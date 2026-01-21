@@ -1,14 +1,12 @@
-mod agents;
-mod assertions;
-mod parser;
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use agents::{AgentHarness, AgentType, ExecutionConfig};
-use assertions::{evaluate_assertions, load_test, AssertionResult};
-use parser::parse_jsonl_file;
+use agent_harness::agents::{AgentHarness, AgentType, ExecutionConfig};
+use agent_harness::parser::{parse_jsonl_file, ToolCall};
+
+#[cfg(feature = "yaml")]
+use agent_harness::yaml::{load_test, run_yaml_test, TestResult};
 
 #[derive(Parser)]
 #[command(name = "harness")]
@@ -173,18 +171,18 @@ fn run_single_test(
     println!();
 
     // Evaluate assertions
-    let results = evaluate_assertions(&test.assertions, tool_calls);
+    let results = run_yaml_test(&test, tool_calls);
 
     let mut passed = 0;
     let mut failed = 0;
 
     for (description, result) in &results {
         match result {
-            AssertionResult::Pass => {
+            TestResult::Pass => {
                 println!("  \x1b[32m✓\x1b[0m {}", description);
                 passed += 1;
             }
-            AssertionResult::Fail { reason } => {
+            TestResult::Fail { reason } => {
                 println!("  \x1b[31m✗\x1b[0m {}", description);
                 println!("    └─ {}", reason);
                 failed += 1;
@@ -284,7 +282,7 @@ fn analyze_session(
     let mapping = agent.tool_mapping();
     let tool_calls: Vec<_> = raw_tool_calls
         .iter()
-        .map(|call| crate::parser::ToolCall {
+        .map(|call| ToolCall {
             name: mapping.to_canonical(&call.name),
             params: call.params.clone(),
             timestamp: call.timestamp,
@@ -314,18 +312,18 @@ fn analyze_session(
     println!();
 
     // Evaluate assertions
-    let results = evaluate_assertions(&test.assertions, &tool_calls);
+    let results = run_yaml_test(&test, &tool_calls);
 
     let mut passed = 0;
     let mut failed = 0;
 
     for (description, result) in &results {
         match result {
-            AssertionResult::Pass => {
+            TestResult::Pass => {
                 println!("  \x1b[32m✓\x1b[0m {}", description);
                 passed += 1;
             }
-            AssertionResult::Fail { reason } => {
+            TestResult::Fail { reason } => {
                 println!("  \x1b[31m✗\x1b[0m {}", description);
                 println!("    └─ {}", reason);
                 failed += 1;

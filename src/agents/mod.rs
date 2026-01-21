@@ -12,21 +12,22 @@
 //! # Example
 //!
 //! ```ignore
-//! use crate::agents::{AgentHarness, AgentType, ExecutionConfig};
+//! use agent_harness::{AgentHarness, AgentType, ExecutionConfig};
 //!
 //! let harness = AgentHarness::new();
 //! let config = ExecutionConfig::new();
 //! let result = harness.execute(Some(AgentType::Claude), "Hello", config)?;
 //!
 //! for call in result.tool_calls {
-//!     println!("Tool: {} (canonical)", call.name);
+//!     println!("Tool: {}", call.name);
 //! }
 //! ```
 
 mod claude;
 mod harness;
-mod mapping;
+pub mod mapping;
 mod traits;
 
-pub use harness::{AgentHarness, AgentType};
-pub use traits::ExecutionConfig;
+pub use harness::{AgentHarness, AgentType, NormalizedResult};
+pub use mapping::ToolNameMapping;
+pub use traits::{Agent, ExecutionConfig, RawExecutionResult};

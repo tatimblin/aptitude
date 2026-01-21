@@ -8,14 +8,27 @@ repository = "https://github.com/tatimblin/agent-execution-harness"
 keywords = ["testing", "ai", "agents", "claude"]
 categories = ["development-tools::testing"]
 
+[lib]
+name = "agent_harness"
+path = "src/lib.rs"
+
 [[bin]]
 name = "harness"
 path = "src/main.rs"
 
+[[example]]
+name = "env-steering"
+path = "examples/env-steering/main.rs"
+
+[features]
+default = ["yaml"]
+yaml = ["dep:serde_yaml"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde_yaml = { version = "0.9", optional = true }
+thiserror = "1"
 notify = "6"
 clap = { version = "4", features = ["derive"] }
 glob = "0.3"

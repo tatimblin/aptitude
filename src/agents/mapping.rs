@@ -4,20 +4,24 @@ use std::collections::HashMap;
 
 /// Canonical tool names used across all agents.
 ///
-/// These are the standard names that test assertions should use.
+/// These match the actual tool names emitted by Claude Code in JSONL output.
+/// The fluent API's Tool enum uses these same names for type safety.
 pub mod canonical {
-    pub const READ_FILE: &str = "read_file";
-    pub const WRITE_FILE: &str = "write_file";
-    pub const EDIT_FILE: &str = "edit_file";
-    pub const EXECUTE_COMMAND: &str = "execute_command";
-    pub const SEARCH_FILES: &str = "search_files";
-    pub const GLOB_FILES: &str = "glob_files";
-    pub const LIST_DIRECTORY: &str = "list_directory";
-    pub const ASK_USER: &str = "ask_user";
-    pub const TASK: &str = "task";
-    pub const WEB_FETCH: &str = "web_fetch";
-    pub const WEB_SEARCH: &str = "web_search";
-    pub const NOTEBOOK_EDIT: &str = "notebook_edit";
+    pub const READ: &str = "Read";
+    pub const WRITE: &str = "Write";
+    pub const EDIT: &str = "Edit";
+    pub const BASH: &str = "Bash";
+    pub const GREP: &str = "Grep";
+    pub const GLOB: &str = "Glob";
+    pub const LIST_DIRECTORY: &str = "LS";
+    pub const ASK_USER: &str = "AskUserQuestion";
+    pub const TASK: &str = "Task";
+    pub const WEB_FETCH: &str = "WebFetch";
+    pub const WEB_SEARCH: &str = "WebSearch";
+    pub const NOTEBOOK_EDIT: &str = "NotebookEdit";
+    pub const TODO_WRITE: &str = "TodoWrite";
+    pub const KILL_SHELL: &str = "KillShell";
+    pub const TASK_OUTPUT: &str = "TaskOutput";
 }
 
 /// Mapping from agent-specific to canonical tool names.
@@ -57,11 +61,11 @@ mod tests {
     #[test]
     fn test_tool_mapping() {
         let mut mapping = ToolNameMapping::new();
-        mapping.add("Read", canonical::READ_FILE);
-        mapping.add("Write", canonical::WRITE_FILE);
+        mapping.add("Read", canonical::READ);
+        mapping.add("Write", canonical::WRITE);
 
-        assert_eq!(mapping.to_canonical("Read"), "read_file");
-        assert_eq!(mapping.to_canonical("Write"), "write_file");
+        assert_eq!(mapping.to_canonical("Read"), "Read");
+        assert_eq!(mapping.to_canonical("Write"), "Write");
         assert_eq!(mapping.to_canonical("Unknown"), "Unknown");
     }
 }

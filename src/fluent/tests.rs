@@ -80,7 +80,7 @@ fn test_times_exact() {
 }
 
 #[test]
-#[should_panic(expected = "called 2 times")]
+#[should_panic(expected = "expected 3 calls, got 2")]
 fn test_times_wrong_count() {
     let calls = vec![
         make_call("Read", json!({"file_path": "/a.txt"})),
@@ -103,7 +103,7 @@ fn test_at_least() {
 }
 
 #[test]
-#[should_panic(expected = "called 2 times")]
+#[should_panic(expected = "expected at least 3 calls, got 2")]
 fn test_at_least_fails() {
     let calls = vec![
         make_call("Read", json!({"file_path": "/a.txt"})),
@@ -125,7 +125,7 @@ fn test_at_most() {
 }
 
 #[test]
-#[should_panic(expected = "called 3 times")]
+#[should_panic(expected = "expected at most 2 calls, got 3")]
 fn test_at_most_fails() {
     let calls = vec![
         make_call("Read", json!({"file_path": "/a.txt"})),
@@ -198,17 +198,21 @@ fn test_nth_call() {
         make_call("Read", json!({"file_path": "/third.txt"})),
     ];
 
+    // New builder-based API
     expect(&calls)
         .tool(Tool::Read)
-        .nth_call(1, |call| {
-            call.with_params(params! {"file_path" => "/first.txt"});
-        })
-        .nth_call(2, |call| {
-            call.with_params(params! {"file_path" => "/second.txt"});
-        })
-        .nth_call(3, |call| {
-            call.with_params(params! {"file_path" => "/third.txt"});
-        });
+        .nth_call(1)
+        .has_params(params! {"file_path" => "/first.txt"});
+
+    expect(&calls)
+        .tool(Tool::Read)
+        .nth_call(2)
+        .has_params(params! {"file_path" => "/second.txt"});
+
+    expect(&calls)
+        .tool(Tool::Read)
+        .nth_call(3)
+        .has_params(params! {"file_path" => "/third.txt"});
 }
 
 #[test]
@@ -219,7 +223,8 @@ fn test_nth_call_out_of_bounds() {
         make_call("Read", json!({"file_path": "/second.txt"})),
     ];
 
-    expect(&calls).tool(Tool::Read).nth_call(4, |_call| {});
+    // Will panic when trying to get call #4
+    let _ = expect(&calls).tool(Tool::Read).nth_call(4);
 }
 
 #[test]
@@ -227,9 +232,42 @@ fn test_nth_call_out_of_bounds() {
 fn test_nth_call_wrong_params() {
     let calls = vec![make_call("Read", json!({"file_path": "/first.txt"}))];
 
-    expect(&calls).tool(Tool::Read).nth_call(1, |call| {
-        call.with_params(params! {"file_path" => "/wrong.txt"});
-    });
+    expect(&calls)
+        .tool(Tool::Read)
+        .nth_call(1)
+        .has_params(params! {"file_path" => "/wrong.txt"});
+}
+
+#[test]
+fn test_last_call() {
+    let calls = vec![
+        make_call("Read", json!({"file_path": "/first.txt"})),
+        make_call("Read", json!({"file_path": "/second.txt"})),
+        make_call("Read", json!({"file_path": "/last.txt"})),
+    ];
+
+    expect(&calls)
+        .tool(Tool::Read)
+        .last_call()
+        .has_params(params! {"file_path" => "/last.txt"});
+}
+
+#[test]
+fn test_nth_call_evaluate_params() {
+    let calls = vec![make_call("Read", json!({"file_path": "/test.txt"}))];
+
+    // Non-panicking evaluation
+    let result = expect(&calls)
+        .tool(Tool::Read)
+        .nth_call(1)
+        .evaluate_params(params! {"file_path" => "*.txt"});
+    assert!(result.passed);
+
+    let result = expect(&calls)
+        .tool(Tool::Read)
+        .nth_call(1)
+        .evaluate_params(params! {"file_path" => "*.rs"});
+    assert!(!result.passed);
 }
 
 #[test]
@@ -287,4 +325,62 @@ fn test_chained_constraints() {
         .at_least(2)
         .after(Tool::Glob)
         .to_be_called();
+}
+
+#[test]
+fn test_evaluate_not_called() {
+    let calls = vec![make_call("Read", json!({"file_path": "/test.txt"}))];
+
+    // Bash was not called - should pass
+    let result = expect(&calls).tool(Tool::Bash).evaluate_not_called();
+    assert!(result.passed);
+
+    // Read was called - should fail
+    let result = expect(&calls).tool(Tool::Read).evaluate_not_called();
+    assert!(!result.passed);
+}
+
+#[test]
+fn test_all_constraints_checked() {
+    // Test that ALL constraints are checked, not just the first one
+    let calls = vec![
+        make_call("Read", json!({"file_path": "/a.txt"})),
+        make_call("Glob", json!({"pattern": "**/*"})),
+    ];
+
+    // Read was called once but AFTER Glob (wrong order)
+    // Both count (times(2)) and ordering (after Glob) should fail
+    let result = expect(&calls)
+        .tool(Tool::Read)
+        .times(2)
+        .after(Tool::Glob)
+        .evaluate();
+
+    assert!(!result.passed);
+    // Should contain both failures
+    let reason = result.reason.unwrap();
+    assert!(reason.contains("expected 2 calls"), "Should mention count failure: {}", reason);
+    assert!(reason.contains("was not called after"), "Should mention ordering failure: {}", reason);
+}
+
+#[test]
+fn test_multiple_count_constraints() {
+    let calls = vec![
+        make_call("Read", json!({"file_path": "/a.txt"})),
+    ];
+
+    // Check that min and max constraints work together
+    let result = expect(&calls)
+        .tool(Tool::Read)
+        .at_least(1)
+        .at_most(5)
+        .evaluate();
+    assert!(result.passed);
+
+    // Should fail when count is outside range
+    let result = expect(&calls)
+        .tool(Tool::Read)
+        .at_least(3)
+        .evaluate();
+    assert!(!result.passed);
 }

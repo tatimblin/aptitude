@@ -267,10 +267,10 @@ impl ToolAssertion {
     // nth_call pattern
     // =========================================================================
 
-    /// Assert on the nth call (1-indexed) of this tool.
+    /// Get the nth call (1-indexed) of this tool for further assertions.
     ///
-    /// The closure receives a `NthCallAssertion` for making assertions
-    /// about that specific call.
+    /// Returns a `NthCallAssertion` builder for making assertions about
+    /// that specific call.
     ///
     /// # Example
     ///
@@ -279,17 +279,14 @@ impl ToolAssertion {
     ///
     /// expect(&tool_calls)
     ///     .tool(Tool::Read)
-    ///     .nth_call(1, |call| {
-    ///         call.with_params(params!{"file_path" => "/first.txt"});
-    ///     })
-    ///     .nth_call(2, |call| {
-    ///         call.with_params(params!{"file_path" => "/second.txt"});
-    ///     });
+    ///     .nth_call(1)
+    ///     .has_params(params!{"file_path" => "/first.txt"});
     /// ```
-    pub fn nth_call<F>(&self, n: usize, f: F) -> &Self
-    where
-        F: FnOnce(NthCallAssertion),
-    {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the nth call doesn't exist.
+    pub fn nth_call(&self, n: usize) -> NthCallAssertion {
         let matching_calls: Vec<&ToolCall> = self
             .tool_calls
             .iter()
@@ -307,16 +304,48 @@ impl ToolAssertion {
         }
 
         let call = matching_calls[n - 1];
-        let assertion = NthCallAssertion::new(call.clone(), self.tool, n);
-        f(assertion);
-        self
+        NthCallAssertion::new(call.clone(), self.tool, n, self.tool_calls.clone())
+    }
+
+    /// Get the last call of this tool for further assertions.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// expect(&tool_calls)
+    ///     .tool(Tool::Read)
+    ///     .last_call()
+    ///     .has_params(params!{"file_path" => "/last.txt"});
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tool was never called.
+    pub fn last_call(&self) -> NthCallAssertion {
+        let matching_calls: Vec<&ToolCall> = self
+            .tool_calls
+            .iter()
+            .filter(|c| c.name == self.tool.as_str())
+            .collect();
+
+        if matching_calls.is_empty() {
+            panic!(
+                "assertion failed: expected {} to have been called\n\n  actual: 0 calls made\n{}",
+                self.tool,
+                self.format_tool_calls()
+            );
+        }
+
+        let n = matching_calls.len();
+        let call = matching_calls[n - 1];
+        NthCallAssertion::new(call.clone(), self.tool, n, self.tool_calls.clone())
     }
 
     // =========================================================================
     // Non-panicking evaluation
     // =========================================================================
 
-    /// Evaluate the assertion without panicking.
+    /// Evaluate the assertion without panicking (expects tool to be called).
     ///
     /// Returns an `AssertionResult` that can be inspected.
     ///
@@ -333,6 +362,23 @@ impl ToolAssertion {
     /// ```
     pub fn evaluate(&self) -> AssertionResult {
         self.evaluate_called(true)
+    }
+
+    /// Evaluate that the tool was NOT called, without panicking.
+    ///
+    /// Returns an `AssertionResult` that can be inspected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let result = expect(&tool_calls)
+    ///     .tool(Tool::Bash)
+    ///     .evaluate_not_called();
+    ///
+    /// assert!(result.passed);
+    /// ```
+    pub fn evaluate_not_called(&self) -> AssertionResult {
+        self.evaluate_called(false)
     }
 
     // =========================================================================
@@ -358,75 +404,105 @@ impl ToolAssertion {
         let count = matching_calls.len();
         let was_called = count > 0;
 
-        // Check ordering first
-        if let Some(after) = &self.after_tool {
-            return self.evaluate_after(after);
-        }
-        if let Some(before) = &self.before_tool {
-            return self.evaluate_before(before);
-        }
+        // Collect all failures - check ALL constraints
+        let mut failures: Vec<String> = Vec::new();
 
-        // Check count constraints
-        if let Some(expected) = self.expected_count {
-            if count != expected {
-                return AssertionResult::fail(
-                    format!("{} called {} times", self.tool, expected),
-                    format!("called {} times", count),
-                );
-            }
-        }
-        if let Some(min) = self.min_count {
-            if count < min {
-                return AssertionResult::fail(
-                    format!("{} called at least {} times", self.tool, min),
-                    format!("called {} times", count),
-                );
-            }
-        }
-        if let Some(max) = self.max_count {
-            if count > max {
-                return AssertionResult::fail(
-                    format!("{} called at most {} times", self.tool, max),
-                    format!("called {} times", count),
-                );
-            }
-        }
-
-        // Check called/not called
+        // Check called/not called first (fundamental constraint)
         if should_be_called && !was_called {
             let param_desc = self
                 .params
                 .as_ref()
                 .map(|p| format!(" with params {:?}", p))
                 .unwrap_or_default();
-            return AssertionResult::fail(
-                format!("{} called", self.tool),
-                format!("tool '{}'{} was never called", self.tool, param_desc),
-            );
-        }
-        if !should_be_called && was_called {
+            failures.push(format!("tool '{}'{} was never called", self.tool, param_desc));
+        } else if !should_be_called && was_called {
             let found = matching_calls.first().unwrap();
-            return AssertionResult::fail(
-                format!("{} not called", self.tool),
-                format!(
-                    "tool '{}' was called but should not have been. Found: {:?}",
-                    self.tool, found.params
-                ),
-            );
+            failures.push(format!(
+                "tool '{}' was called but should not have been. Found: {:?}",
+                self.tool, found.params
+            ));
         }
 
-        AssertionResult::pass(format!(
-            "{} {}",
-            self.tool,
-            if should_be_called {
-                "called"
-            } else {
-                "not called"
+        // Check count constraints (always check if constraint is set)
+        if should_be_called {
+            if let Some(expected) = self.expected_count {
+                if count != expected {
+                    failures.push(format!("expected {} calls, got {}", expected, count));
+                }
             }
-        ))
+            if let Some(min) = self.min_count {
+                if count < min {
+                    failures.push(format!("expected at least {} calls, got {}", min, count));
+                }
+            }
+            if let Some(max) = self.max_count {
+                if count > max {
+                    failures.push(format!("expected at most {} calls, got {}", max, count));
+                }
+            }
+        }
+
+        // Check ordering constraints
+        if let Some(after) = &self.after_tool {
+            if let Some(err) = self.check_after(after) {
+                failures.push(err);
+            }
+        }
+        if let Some(before) = &self.before_tool {
+            if let Some(err) = self.check_before(before) {
+                failures.push(err);
+            }
+        }
+
+        // Build description
+        let description = self.build_description(should_be_called);
+
+        if failures.is_empty() {
+            AssertionResult::pass(description)
+        } else {
+            AssertionResult::fail(description, failures.join("; "))
+        }
     }
 
-    fn evaluate_after(&self, after_tool: &Tool) -> AssertionResult {
+    /// Build a human-readable description of what this assertion checks.
+    fn build_description(&self, should_be_called: bool) -> String {
+        let mut parts = vec![self.tool.to_string()];
+
+        if let Some(params) = &self.params {
+            let param_str: Vec<String> = params
+                .iter()
+                .map(|(k, v)| format!("{}='{}'", k, v))
+                .collect();
+            parts.push(format!("with {}", param_str.join(", ")));
+        }
+
+        if should_be_called {
+            parts.push("called".to_string());
+        } else {
+            parts.push("not called".to_string());
+        }
+
+        if let Some(after) = &self.after_tool {
+            parts.push(format!("after {}", after));
+        }
+        if let Some(before) = &self.before_tool {
+            parts.push(format!("before {}", before));
+        }
+        if let Some(n) = self.expected_count {
+            parts.push(format!("{} times", n));
+        }
+        if let Some(n) = self.min_count {
+            parts.push(format!("at least {} times", n));
+        }
+        if let Some(n) = self.max_count {
+            parts.push(format!("at most {} times", n));
+        }
+
+        parts.join(" ")
+    }
+
+    /// Check if tool was called after another tool. Returns error message if failed.
+    fn check_after(&self, after_tool: &Tool) -> Option<String> {
         let mut seen_after = false;
 
         for call in &self.tool_calls {
@@ -436,34 +512,23 @@ impl ToolAssertion {
             if call.name == self.tool.as_str() && seen_after {
                 if let Some(params) = &self.params {
                     if params_match(params, &call.params) {
-                        return AssertionResult::pass(format!(
-                            "{} called after {}",
-                            self.tool, after_tool
-                        ));
+                        return None; // Success
                     }
                 } else {
-                    return AssertionResult::pass(format!(
-                        "{} called after {}",
-                        self.tool, after_tool
-                    ));
+                    return None; // Success
                 }
             }
         }
 
         if !seen_after {
-            return AssertionResult::fail(
-                format!("{} called after {}", self.tool, after_tool),
-                format!("tool '{}' was never called", after_tool),
-            );
+            Some(format!("'{}' was never called", after_tool))
+        } else {
+            Some(format!("'{}' was not called after '{}'", self.tool, after_tool))
         }
-
-        AssertionResult::fail(
-            format!("{} called after {}", self.tool, after_tool),
-            format!("'{}' was not called after '{}'", self.tool, after_tool),
-        )
     }
 
-    fn evaluate_before(&self, before_tool: &Tool) -> AssertionResult {
+    /// Check if tool was called before another tool. Returns error message if failed.
+    fn check_before(&self, before_tool: &Tool) -> Option<String> {
         let mut seen_this = false;
 
         for call in &self.tool_calls {
@@ -477,10 +542,7 @@ impl ToolAssertion {
                 }
             }
             if call.name == before_tool.as_str() && seen_this {
-                return AssertionResult::pass(format!(
-                    "{} called before {}",
-                    self.tool, before_tool
-                ));
+                return None; // Success
             }
         }
 
@@ -491,22 +553,12 @@ impl ToolAssertion {
             .any(|c| c.name == before_tool.as_str());
 
         if !this_called {
-            return AssertionResult::fail(
-                format!("{} called before {}", self.tool, before_tool),
-                format!("tool '{}' was never called", self.tool),
-            );
+            Some(format!("'{}' was never called", self.tool))
+        } else if !before_called {
+            Some(format!("'{}' was never called", before_tool))
+        } else {
+            Some(format!("'{}' was not called before '{}'", self.tool, before_tool))
         }
-        if !before_called {
-            return AssertionResult::fail(
-                format!("{} called before {}", self.tool, before_tool),
-                format!("tool '{}' was never called", before_tool),
-            );
-        }
-
-        AssertionResult::fail(
-            format!("{} called before {}", self.tool, before_tool),
-            format!("'{}' was not called before '{}'", self.tool, before_tool),
-        )
     }
 
     fn panic_with_context(&self, result: &AssertionResult) -> ! {
@@ -551,30 +603,111 @@ impl ToolAssertion {
     }
 }
 
-/// Assertion helper for a specific call (used in nth_call).
+/// Assertion builder for a specific call (used in nth_call/last_call).
+///
+/// Provides methods to assert on parameter values for a specific tool call.
 #[derive(Debug, Clone)]
 pub struct NthCallAssertion {
     call: ToolCall,
     tool: Tool,
     n: usize,
+    all_calls: Vec<ToolCall>,
 }
 
 impl NthCallAssertion {
-    fn new(call: ToolCall, tool: Tool, n: usize) -> Self {
-        Self { call, tool, n }
+    fn new(call: ToolCall, tool: Tool, n: usize, all_calls: Vec<ToolCall>) -> Self {
+        Self { call, tool, n, all_calls }
     }
 
-    /// Assert this specific call has the given parameters.
+    /// Assert this specific call has the given parameters (panics on mismatch).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// expect(&tool_calls)
+    ///     .tool(Tool::Read)
+    ///     .nth_call(1)
+    ///     .has_params(params!{"file_path" => "*.txt"});
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if the parameters don't match.
-    pub fn with_params(self, params: HashMap<String, String>) {
+    pub fn has_params(self, params: HashMap<String, String>) -> Self {
         if !params_match(&params, &self.call.params) {
             panic!(
-                "assertion failed: {} call #{} params did not match\n\n  expected: {:?}\n  actual: {:?}",
-                self.tool, self.n, params, self.call.params
+                "assertion failed: {} call #{} params did not match\n\n  expected: {:?}\n  actual: {:?}\n{}",
+                self.tool, self.n, params, self.call.params, self.format_tool_calls()
             );
         }
+        self
+    }
+
+    /// Evaluate parameter match without panicking.
+    ///
+    /// Returns an `AssertionResult` that can be inspected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let result = expect(&tool_calls)
+    ///     .tool(Tool::Read)
+    ///     .nth_call(1)
+    ///     .evaluate_params(params!{"file_path" => "*.txt"});
+    ///
+    /// assert!(result.passed);
+    /// ```
+    pub fn evaluate_params(&self, params: HashMap<String, String>) -> AssertionResult {
+        if params_match(&params, &self.call.params) {
+            AssertionResult::pass(format!("{} call #{} params match", self.tool, self.n))
+        } else {
+            AssertionResult::fail(
+                format!("{} call #{} params match", self.tool, self.n),
+                format!("expected {:?}, got {:?}", params, self.call.params),
+            )
+        }
+    }
+
+    /// Get the actual parameters of this call.
+    ///
+    /// Useful for debugging or custom assertions.
+    pub fn params(&self) -> &serde_json::Value {
+        &self.call.params
+    }
+
+    /// Get the call index (1-indexed).
+    pub fn index(&self) -> usize {
+        self.n
+    }
+
+    fn format_tool_calls(&self) -> String {
+        if self.all_calls.is_empty() {
+            return "  tool calls made: (none)\n".to_string();
+        }
+
+        let mut output = format!("  tool calls made ({}):\n", self.all_calls.len());
+        for (i, call) in self.all_calls.iter().enumerate() {
+            let params_preview = call
+                .params
+                .get("file_path")
+                .or_else(|| call.params.get("command"))
+                .or_else(|| call.params.get("pattern"))
+                .and_then(|v| v.as_str())
+                .map(|s| {
+                    if s.len() > 50 {
+                        format!("{}...", &s[..47])
+                    } else {
+                        s.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "...".to_string());
+            output.push_str(&format!(
+                "    {}. {} {{ {} }}\n",
+                i + 1,
+                call.name,
+                params_preview
+            ));
+        }
+        output
     }
 }

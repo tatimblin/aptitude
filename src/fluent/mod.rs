@@ -27,7 +27,7 @@ mod builder;
 mod matchers;
 mod tool;
 
-pub use builder::{expect, ToolAssertion, ToolCallExpectation};
+pub use builder::{expect, AssertionResult, NthCallAssertion, ToolAssertion, ToolCallExpectation};
 pub use matchers::params_match;
 pub use tool::Tool;
 

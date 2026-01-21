@@ -1,0 +1,14 @@
+name: "Read order test"
+prompt: "Read AGENTS.md in this directory and follow its instructions"
+assertions:
+  # AGENTS.md must be read exactly twice
+  - tool: read_file
+    params:
+      file_path: "*AGENTS.md"
+    call_count: 2
+
+  # SUMMARY.md must be the second thing read
+  - tool: read_file
+    nth_call_params:
+      2:
+        file_path: "*SUMMARY.md"

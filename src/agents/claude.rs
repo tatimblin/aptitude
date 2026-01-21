@@ -53,8 +53,11 @@ impl Agent for ClaudeAdapter {
         // Get the claude projects directory to watch for new sessions
         let claude_dir = get_claude_projects_dir()?;
 
-        // Get list of existing sessions before running
-        let existing_sessions = list_session_files(&claude_dir)?;
+        // Determine the specific project directory for the working directory
+        let project_dir = get_project_dir_for_workdir(&claude_dir, &config.working_dir)?;
+
+        // Get list of existing sessions before running (only in this project)
+        let existing_sessions = list_session_files(&project_dir)?;
 
         // Run claude with the prompt
         let mut cmd = Command::new("claude");
@@ -70,8 +73,8 @@ impl Agent for ClaudeAdapter {
 
         let _output = cmd.output().context("Failed to execute claude command")?;
 
-        // Find the new session log file
-        let session_log_path = find_new_session(&claude_dir, &existing_sessions)?;
+        // Find the new session log file (only in this project)
+        let session_log_path = find_new_session(&project_dir, &existing_sessions)?;
 
         Ok(RawExecutionResult {
             session_log_path: Some(session_log_path),
@@ -114,6 +117,36 @@ fn get_claude_projects_dir() -> Result<PathBuf> {
     }
 
     Ok(claude_dir)
+}
+
+/// Get the specific project directory for a given working directory.
+///
+/// Claude Code stores sessions in directories named after the working directory path,
+/// with slashes replaced by dashes. E.g., /Users/foo/bar becomes -Users-foo-bar
+fn get_project_dir_for_workdir(
+    claude_dir: &PathBuf,
+    working_dir: &Option<PathBuf>,
+) -> Result<PathBuf> {
+    let workdir = match working_dir {
+        Some(dir) => dir
+            .canonicalize()
+            .context("Failed to canonicalize working directory")?,
+        None => std::env::current_dir().context("Failed to get current directory")?,
+    };
+
+    // Convert path to Claude's project directory naming convention
+    // /Users/foo/bar -> -Users-foo-bar
+    let path_str = workdir.to_string_lossy();
+    let project_name = path_str.replace('/', "-");
+
+    let project_dir = claude_dir.join(&project_name);
+
+    // If the specific project dir doesn't exist, fall back to searching all projects
+    if !project_dir.exists() {
+        return Ok(claude_dir.clone());
+    }
+
+    Ok(project_dir)
 }
 
 /// List all JSONL session files in the claude directory.

@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "harness"
 path = "src/main.rs"
 
+[[example]]
+name = "env-steering"
+path = "examples/env-steering/main.rs"
+
 [features]
 default = ["yaml"]
 yaml = ["dep:serde_yaml"]

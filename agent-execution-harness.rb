@@ -1,7 +1,7 @@
 class AgentExecutionHarness < Formula
   desc "Test harness for validating AI agent behavior against steering guides"
   homepage "https://github.com/tatimblin/agent-execution-harness"
-  version "0.1.6"
+  version "0.2.0"
 
   on_macos do
     if Hardware::CPU.arm?

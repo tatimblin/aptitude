@@ -182,10 +182,3 @@ fn find_new_session(claude_dir: &PathBuf, existing: &[PathBuf]) -> Result<PathBu
         .map(|(path, _)| path)
         .context("Could not find session log file")
 }
-
-/// Find the most recent session log file.
-#[allow(dead_code)]
-pub fn find_latest_session() -> Result<PathBuf> {
-    let claude_dir = get_claude_projects_dir()?;
-    find_new_session(&claude_dir, &[])
-}

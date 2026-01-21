@@ -1,6 +1,5 @@
 mod agents;
 mod assertions;
-mod executor;
 mod parser;
 mod watcher;
 

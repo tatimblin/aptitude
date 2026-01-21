@@ -14,11 +14,16 @@ pub struct ToolCall {
     pub timestamp: DateTime<Utc>,
 }
 
-/// Raw log entry from JSONL
+/// Lightweight struct to check entry type before full parse
 #[derive(Debug, Deserialize)]
-struct LogEntry {
+struct EntryTypeCheck {
     #[serde(rename = "type")]
     entry_type: Option<String>,
+}
+
+/// Raw log entry from JSONL (only valid for assistant messages)
+#[derive(Debug, Deserialize)]
+struct LogEntry {
     timestamp: Option<String>,
     message: Option<MessageContent>,
 }
@@ -56,14 +61,8 @@ pub fn parse_jsonl_file(path: &Path) -> Result<Vec<ToolCall>> {
 
     for line in reader.lines() {
         let line = line.context("Failed to read line")?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if let Ok(entry) = serde_json::from_str::<LogEntry>(&line) {
-            if let Some(calls) = extract_tool_calls(&entry) {
-                tool_calls.extend(calls);
-            }
+        if let Some(calls) = parse_line_internal(&line)? {
+            tool_calls.extend(calls);
         }
     }
 
@@ -71,27 +70,33 @@ pub fn parse_jsonl_file(path: &Path) -> Result<Vec<ToolCall>> {
 }
 
 /// Parse JSONL content from a string (for incremental parsing)
-///
-/// Returns an empty Vec if parsing fails (e.g., for user messages with different format)
 pub fn parse_jsonl_line(line: &str) -> Result<Vec<ToolCall>> {
+    Ok(parse_line_internal(line)?.unwrap_or_default())
+}
+
+/// Internal parsing: check type first, then parse full entry only for assistant messages
+fn parse_line_internal(line: &str) -> Result<Option<Vec<ToolCall>>> {
     if line.trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
-    // Be lenient with parsing - user messages and other non-assistant messages
-    // may have different formats
-    match serde_json::from_str::<LogEntry>(line) {
-        Ok(entry) => Ok(extract_tool_calls(&entry).unwrap_or_default()),
-        Err(_) => Ok(Vec::new()),
+    // First, check if this is an assistant message (lightweight parse)
+    let type_check: EntryTypeCheck =
+        serde_json::from_str(line).context("Failed to parse JSON line")?;
+
+    if type_check.entry_type.as_deref() != Some("assistant") {
+        // Not an assistant message, skip without full parse
+        return Ok(None);
     }
+
+    // Now do the full parse for assistant messages
+    let entry: LogEntry =
+        serde_json::from_str(line).context("Failed to parse assistant message")?;
+
+    Ok(extract_tool_calls(&entry))
 }
 
 fn extract_tool_calls(entry: &LogEntry) -> Option<Vec<ToolCall>> {
-    // Only process assistant messages
-    if entry.entry_type.as_deref() != Some("assistant") {
-        return None;
-    }
-
     let timestamp = entry
         .timestamp
         .as_ref()
@@ -135,7 +140,16 @@ mod tests {
 
     #[test]
     fn test_skip_user_messages() {
+        // User messages are skipped early (before full parse) based on type field
         let json = r#"{"type":"user","timestamp":"2024-01-19T12:00:00Z","message":{"content":"hello"}}"#;
+        let calls = parse_jsonl_line(json).unwrap();
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_skip_system_messages() {
+        // System/meta messages are also skipped
+        let json = r#"{"type":"system","subtype":"turn_duration","durationMs":318950}"#;
         let calls = parse_jsonl_line(json).unwrap();
         assert!(calls.is_empty());
     }

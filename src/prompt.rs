@@ -15,8 +15,26 @@
 //!
 //! expect(&tool_calls).tool(Tool::Read).to_be_called();
 //! ```
+//!
+//! # Full Output
+//!
+//! ```rust,ignore
+//! use agent_harness::{prompt, expect, Tool};
+//!
+//! let output = prompt("Read the config file")
+//!     .run_full()
+//!     .unwrap();
+//!
+//! // Access tool calls
+//! expect(&output.result.tool_calls).tool(Tool::Read).to_be_called();
+//!
+//! // Access debug info if needed
+//! if let Some(stdout) = &output.stdout {
+//!     println!("Response: {}", stdout);
+//! }
+//! ```
 
-use crate::agents::{AgentHarness, AgentType, ExecutionConfig};
+use crate::agents::{AgentHarness, AgentType, ExecutionConfig, ExecutionOutput};
 use crate::parser::ToolCall;
 use std::path::PathBuf;
 
@@ -97,10 +115,44 @@ impl PromptBuilder {
         self
     }
 
+    /// Execute the prompt and return the full execution output.
+    ///
+    /// Returns [`ExecutionOutput`] containing both the normalized result
+    /// (tool calls) and debug info (stdout, session log path).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use agent_harness::prompt;
+    ///
+    /// let output = prompt("Read config.json")
+    ///     .run_full()
+    ///     .unwrap();
+    ///
+    /// // Access tool calls
+    /// println!("Made {} tool calls", output.result.tool_calls.len());
+    ///
+    /// // Access debug info if needed
+    /// if let Some(stdout) = &output.stdout {
+    ///     println!("Response: {}", stdout);
+    /// }
+    /// ```
+    pub fn run_full(self) -> anyhow::Result<ExecutionOutput> {
+        let harness = AgentHarness::new();
+        let mut config = ExecutionConfig::new();
+
+        if let Some(dir) = self.working_dir {
+            config = config.with_working_dir(dir);
+        }
+
+        harness.execute(self.agent, &self.text, config)
+    }
+
     /// Execute the prompt and return tool calls.
     ///
-    /// This runs the configured agent with the prompt and collects all tool
-    /// calls made during execution.
+    /// This is a convenience method that extracts just the tool calls
+    /// from the execution result. Use [`run_full`](Self::run_full) if you
+    /// need access to stdout or other debug info.
     ///
     /// # Errors
     ///
@@ -116,15 +168,7 @@ impl PromptBuilder {
     /// assert!(!tool_calls.is_empty());
     /// ```
     pub fn run(self) -> anyhow::Result<Vec<ToolCall>> {
-        let harness = AgentHarness::new();
-        let mut config = ExecutionConfig::new();
-
-        if let Some(dir) = self.working_dir {
-            config = config.with_working_dir(dir);
-        }
-
-        let result = harness.execute(self.agent, &self.text, config)?;
-        Ok(result.tool_calls)
+        Ok(self.run_full()?.result.tool_calls)
     }
 }
 

@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use agent_harness::agents::{AgentHarness, AgentType, ExecutionConfig};
+use agent_harness::output::{OutputConfig, OutputFormatter};
 use agent_harness::parser::{parse_jsonl_file, ToolCall};
 
 #[cfg(feature = "yaml")]
@@ -139,35 +140,16 @@ fn run_single_test(
     }
 
     // Execute agent with the prompt
-    let result = harness.execute(agent_type, &test.prompt, config)?;
-
-    if verbose {
-        println!("Agent: {}", result.agent_name);
-    }
+    let execution_output = harness.execute(agent_type, &test.prompt, config)?;
 
     // Tool calls are already normalized to canonical names
-    let tool_calls = &result.tool_calls;
-
-    if verbose {
-        println!();
-        for call in tool_calls {
-            let params_preview = call
-                .params
-                .get("file_path")
-                .or_else(|| call.params.get("command"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            println!(
-                "[{}] Tool: {} ({})",
-                call.timestamp.format("%H:%M:%S"),
-                call.name,
-                params_preview
-            );
-        }
-    }
+    let tool_calls = &execution_output.result.tool_calls;
 
     println!();
     println!("{} finished. Evaluating assertions...", agent_name);
+    if let Some(log_path) = &execution_output.session_log_path {
+        println!("Session log: {:?}", log_path);
+    }
     println!();
 
     // Evaluate assertions
@@ -190,8 +172,10 @@ fn run_single_test(
         }
     }
 
+    let test_passed = failed == 0;
+
     println!();
-    if failed == 0 {
+    if test_passed {
         println!(
             "\x1b[32mResults: {}/{} passed\x1b[0m",
             passed,
@@ -205,7 +189,17 @@ fn run_single_test(
         );
     }
 
-    Ok(failed == 0)
+    // Use OutputFormatter for tool calls and response output
+    let output_config = if verbose {
+        OutputConfig::verbose()
+    } else {
+        OutputConfig::new() // OnFailure by default
+    };
+    let formatter = OutputFormatter::new(output_config);
+    formatter.print_tool_calls(tool_calls, test_passed);
+    formatter.print_response(execution_output.stdout.as_deref(), test_passed);
+
+    Ok(test_passed)
 }
 
 fn run_tests_in_directory(

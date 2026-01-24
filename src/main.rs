@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use aptitude::agents::{AgentHarness, AgentType, ExecutionConfig};
 use aptitude::config::Config;
@@ -96,12 +96,12 @@ fn main() -> Result<()> {
 
             if path.is_file() {
                 // Single file mode - run directly
-                run_single_test(&harness, &path, verbose, workdir.as_ref(), agent_type)?;
+                run_single_test(&harness, &path, verbose, workdir.as_deref(), agent_type)?;
             } else {
                 // Directory mode - use discovery
-                let (config, config_dir) = load_or_discover_config(&path, config_path.as_ref())?;
+                let (config, config_dir) = load_or_discover_config(&path, config_path.as_deref());
                 let config = config.with_overrides(pattern, root, no_recursive);
-                let search_root = config.resolve_root(&path, config_dir.as_deref());
+                let search_root = config.search_dir(&path, config_dir.as_deref());
 
                 if list_tests {
                     list_discovered_tests(&search_root, &config)?;
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
                         &harness,
                         &search_root,
                         verbose,
-                        workdir.as_ref(),
+                        workdir.as_deref(),
                         agent_type,
                         &config,
                     )?;
@@ -140,32 +140,21 @@ fn parse_agent_type(agent: Option<&str>) -> Result<Option<AgentType>> {
 
 /// Load config from explicit path or discover from directory.
 fn load_or_discover_config(
-    start_dir: &PathBuf,
-    explicit_path: Option<&PathBuf>,
-) -> Result<(Config, Option<PathBuf>)> {
+    start_dir: &Path,
+    explicit_path: Option<&Path>,
+) -> (Config, Option<PathBuf>) {
     match explicit_path {
-        Some(path) => {
-            let config = Config::load(path)?;
-            let config_dir = path.parent().map(|p| p.to_path_buf());
-            Ok((config, config_dir))
-        }
-        None => {
-            match Config::discover(start_dir) {
-                Some((config, config_dir)) => {
-                    println!("Using config: {:?}", config_dir.join(".aptitude.yaml"));
-                    Ok((config, Some(config_dir)))
-                }
-                None => {
-                    // Use default config
-                    Ok((Config::default(), None))
-                }
-            }
-        }
+        Some(path) => Config::load(path)
+            .map(|(c, d)| (c, Some(d)))
+            .unwrap_or_else(|_| (Config::default(), None)),
+        None => Config::discover(start_dir)
+            .map(|(c, d)| (c, Some(d)))
+            .unwrap_or_else(|| (Config::default(), None)),
     }
 }
 
 /// List discovered test files without running them.
-fn list_discovered_tests(dir: &PathBuf, config: &Config) -> Result<()> {
+fn list_discovered_tests(dir: &Path, config: &Config) -> Result<()> {
     let tests = discover_tests(dir, config)?;
 
     println!();
@@ -196,9 +185,9 @@ fn list_agents(harness: &AgentHarness) {
 
 fn run_single_test(
     harness: &AgentHarness,
-    test_path: &PathBuf,
+    test_path: &Path,
     verbose: bool,
-    workdir: Option<&PathBuf>,
+    workdir: Option<&Path>,
     cli_agent: Option<AgentType>,
 ) -> Result<bool> {
     let test = load_test(test_path).context("Failed to load test file")?;
@@ -223,7 +212,7 @@ fn run_single_test(
     // Build execution config
     let mut config = ExecutionConfig::new();
     if let Some(dir) = workdir {
-        config = config.with_working_dir(dir.clone());
+        config = config.with_working_dir(dir.to_path_buf());
     }
 
     // Execute agent with the prompt
@@ -291,9 +280,9 @@ fn run_single_test(
 
 fn run_tests_in_directory(
     harness: &AgentHarness,
-    dir: &PathBuf,
+    dir: &Path,
     verbose: bool,
-    workdir: Option<&PathBuf>,
+    workdir: Option<&Path>,
     cli_agent: Option<AgentType>,
     config: &Config,
 ) -> Result<()> {
@@ -348,8 +337,8 @@ fn run_tests_in_directory(
 
 fn analyze_session(
     harness: &AgentHarness,
-    test_path: &PathBuf,
-    session_path: &PathBuf,
+    test_path: &Path,
+    session_path: &Path,
     cli_agent: Option<AgentType>,
 ) -> Result<()> {
     let test = load_test(test_path).context("Failed to load test file")?;

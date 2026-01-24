@@ -58,6 +58,8 @@
 //! ```
 
 pub mod agents;
+pub mod config;
+pub mod discovery;
 pub mod fluent;
 pub mod output;
 pub mod parser;
@@ -67,7 +69,10 @@ pub mod prompt;
 pub mod yaml;
 
 // Core types
-pub use fluent::{expect, params_match, ToolCallExpectation, ToolAssertion};
+pub use fluent::{
+    expect, expect_tools, params_match, ExecutionExpectation, StdoutAssertion, ToolAssertion,
+    ToolCallExpectation,
+};
 pub use parser::{parse_jsonl_file as parse_session, ToolCall};
 
 // Tool enum

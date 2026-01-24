@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use aptitude::agents::{AgentHarness, AgentType, ExecutionConfig};
+use aptitude::config::Config;
+use aptitude::discovery::discover_tests;
 use aptitude::output::{OutputConfig, OutputFormatter};
 use aptitude::parser::{parse_jsonl_file, ToolCall};
 
@@ -35,6 +37,26 @@ enum Commands {
         /// Agent to use (overrides test file setting)
         #[arg(short, long)]
         agent: Option<String>,
+
+        /// Test file pattern (overrides config)
+        #[arg(short, long)]
+        pattern: Option<String>,
+
+        /// Root directory for test discovery (overrides config)
+        #[arg(short, long)]
+        root: Option<PathBuf>,
+
+        /// Disable recursive directory scanning
+        #[arg(long)]
+        no_recursive: bool,
+
+        /// Path to config file (default: auto-discover)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+
+        /// List matched test files without running them
+        #[arg(long)]
+        list_tests: bool,
     },
 
     /// Analyze an existing session log file
@@ -52,6 +74,24 @@ enum Commands {
 
     /// List available agents
     Agents,
+
+    /// Execute Claude with a prompt and display tool calls (no assertions)
+    Log {
+        /// The prompt to send to Claude
+        prompt: String,
+
+        /// Working directory for agent execution
+        #[arg(short, long)]
+        workdir: Option<PathBuf>,
+
+        /// Agent to use (default: claude)
+        #[arg(short, long)]
+        agent: Option<String>,
+
+        /// Model to use (passed to Claude via --model)
+        #[arg(short, long)]
+        model: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -64,12 +104,35 @@ fn main() -> Result<()> {
             verbose,
             workdir,
             agent,
+            pattern,
+            root,
+            no_recursive,
+            config: config_path,
+            list_tests,
         } => {
             let agent_type = parse_agent_type(agent.as_deref())?;
-            if path.is_dir() {
-                run_tests_in_directory(&harness, &path, verbose, workdir.as_ref(), agent_type)?;
+
+            if path.is_file() {
+                // Single file mode - run directly
+                run_single_test(&harness, &path, verbose, workdir.as_deref(), agent_type)?;
             } else {
-                run_single_test(&harness, &path, verbose, workdir.as_ref(), agent_type)?;
+                // Directory mode - use discovery
+                let (config, config_dir) = load_or_discover_config(&path, config_path.as_deref());
+                let config = config.with_overrides(pattern, root, no_recursive);
+                let search_root = config.search_dir(&path, config_dir.as_deref());
+
+                if list_tests {
+                    list_discovered_tests(&search_root, &config)?;
+                } else {
+                    run_tests_in_directory(
+                        &harness,
+                        &search_root,
+                        verbose,
+                        workdir.as_deref(),
+                        agent_type,
+                        &config,
+                    )?;
+                }
             }
         }
         Commands::Analyze { test, session, agent } => {
@@ -78,6 +141,15 @@ fn main() -> Result<()> {
         }
         Commands::Agents => {
             list_agents(&harness);
+        }
+        Commands::Log {
+            prompt,
+            workdir,
+            agent,
+            model,
+        } => {
+            let agent_type = parse_agent_type(agent.as_deref())?;
+            log_command(&harness, &prompt, workdir.as_deref(), agent_type, model.as_deref())?;
         }
     }
 
@@ -91,6 +163,37 @@ fn parse_agent_type(agent: Option<&str>) -> Result<Option<AgentType>> {
             .ok_or_else(|| anyhow::anyhow!("Unknown agent: '{}'. Use 'aptitude agents' to list available agents.", name))
             .map(Some),
     }
+}
+
+/// Load config from explicit path or discover from directory.
+fn load_or_discover_config(
+    start_dir: &Path,
+    explicit_path: Option<&Path>,
+) -> (Config, Option<PathBuf>) {
+    match explicit_path {
+        Some(path) => Config::load(path)
+            .map(|(c, d)| (c, Some(d)))
+            .unwrap_or_else(|_| (Config::default(), None)),
+        None => Config::discover(start_dir)
+            .map(|(c, d)| (c, Some(d)))
+            .unwrap_or_else(|| (Config::default(), None)),
+    }
+}
+
+/// List discovered test files without running them.
+fn list_discovered_tests(dir: &Path, config: &Config) -> Result<()> {
+    let tests = discover_tests(dir, config)?;
+
+    println!();
+    println!("Discovered {} test file(s):", tests.len());
+    println!();
+
+    for path in &tests {
+        println!("  {}", path.display());
+    }
+
+    println!();
+    Ok(())
 }
 
 fn list_agents(harness: &AgentHarness) {
@@ -109,9 +212,9 @@ fn list_agents(harness: &AgentHarness) {
 
 fn run_single_test(
     harness: &AgentHarness,
-    test_path: &PathBuf,
+    test_path: &Path,
     verbose: bool,
-    workdir: Option<&PathBuf>,
+    workdir: Option<&Path>,
     cli_agent: Option<AgentType>,
 ) -> Result<bool> {
     let test = load_test(test_path).context("Failed to load test file")?;
@@ -136,7 +239,7 @@ fn run_single_test(
     // Build execution config
     let mut config = ExecutionConfig::new();
     if let Some(dir) = workdir {
-        config = config.with_working_dir(dir.clone());
+        config = config.with_working_dir(dir.to_path_buf());
     }
 
     // Execute agent with the prompt
@@ -152,8 +255,8 @@ fn run_single_test(
     }
     println!();
 
-    // Evaluate assertions
-    let results = run_yaml_test(&test, tool_calls);
+    // Evaluate assertions (including stdout assertions)
+    let results = run_yaml_test(&test, tool_calls, &execution_output.stdout);
 
     let mut passed = 0;
     let mut failed = 0;
@@ -204,42 +307,53 @@ fn run_single_test(
 
 fn run_tests_in_directory(
     harness: &AgentHarness,
-    dir: &PathBuf,
+    dir: &Path,
     verbose: bool,
-    workdir: Option<&PathBuf>,
+    workdir: Option<&Path>,
     cli_agent: Option<AgentType>,
+    config: &Config,
 ) -> Result<()> {
-    let mut total_passed = 0;
-    let mut total_failed = 0;
+    let test_files = discover_tests(dir, config)?;
 
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.extension().map_or(false, |ext| ext == "yaml" || ext == "yml") {
-            match run_single_test(harness, &path, verbose, workdir, cli_agent) {
-                Ok(passed) => {
-                    if passed {
-                        total_passed += 1;
-                    } else {
-                        total_failed += 1;
-                    }
-                }
-                Err(e) => {
-                    println!("\x1b[31mError running {:?}: {}\x1b[0m", path, e);
-                    total_failed += 1;
-                }
-            }
-            println!();
-            println!("{}", "─".repeat(60));
-        }
+    if test_files.is_empty() {
+        println!();
+        println!(
+            "No test files found matching pattern '{}' in {:?}",
+            config.test_pattern, dir
+        );
+        return Ok(());
     }
 
     println!();
     println!(
-        "Total: {} passed, {} failed",
-        total_passed, total_failed
+        "Found {} test file(s) matching '{}'",
+        test_files.len(),
+        config.test_pattern
     );
+
+    let mut total_passed = 0;
+    let mut total_failed = 0;
+
+    for path in test_files {
+        match run_single_test(harness, &path, verbose, workdir, cli_agent) {
+            Ok(passed) => {
+                if passed {
+                    total_passed += 1;
+                } else {
+                    total_failed += 1;
+                }
+            }
+            Err(e) => {
+                println!("\x1b[31mError running {:?}: {}\x1b[0m", path, e);
+                total_failed += 1;
+            }
+        }
+        println!();
+        println!("{}", "─".repeat(60));
+    }
+
+    println!();
+    println!("Total: {} passed, {} failed", total_passed, total_failed);
 
     if total_failed > 0 {
         std::process::exit(1);
@@ -250,8 +364,8 @@ fn run_tests_in_directory(
 
 fn analyze_session(
     harness: &AgentHarness,
-    test_path: &PathBuf,
-    session_path: &PathBuf,
+    test_path: &Path,
+    session_path: &Path,
     cli_agent: Option<AgentType>,
 ) -> Result<()> {
     let test = load_test(test_path).context("Failed to load test file")?;
@@ -305,8 +419,8 @@ fn analyze_session(
     println!("Evaluating assertions...");
     println!();
 
-    // Evaluate assertions
-    let results = run_yaml_test(&test, &tool_calls);
+    // Evaluate assertions (stdout not available in analyze mode)
+    let results = run_yaml_test(&test, &tool_calls, &None);
 
     let mut passed = 0;
     let mut failed = 0;
@@ -339,6 +453,66 @@ fn analyze_session(
             passed + failed
         );
         std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn log_command(
+    harness: &AgentHarness,
+    prompt: &str,
+    workdir: Option<&Path>,
+    cli_agent: Option<AgentType>,
+    model: Option<&str>,
+) -> Result<()> {
+    let agent_name = cli_agent
+        .map(|a| a.as_str())
+        .unwrap_or("claude");
+
+    println!();
+    println!("Executing Claude with prompt: \"{}\"", prompt);
+    println!("Agent: {}", agent_name);
+    println!();
+
+    // Build execution config
+    let mut config = ExecutionConfig::new();
+    if let Some(dir) = workdir {
+        config = config.with_working_dir(dir.to_path_buf());
+    }
+    if let Some(m) = model {
+        config.extra_args.push("--model".to_string());
+        config.extra_args.push(m.to_string());
+    }
+
+    // Execute agent with the prompt
+    let execution_output = harness.execute(cli_agent, prompt, config)?;
+
+    // Tool calls are already normalized to canonical names
+    let tool_calls = &execution_output.result.tool_calls;
+
+    println!();
+    println!("Tool calls:");
+    println!("{}", "─".repeat(60));
+
+    let formatter = OutputFormatter::new(OutputConfig::verbose());
+    for call in tool_calls {
+        println!("{}", formatter.format_tool_call(call));
+    }
+
+    println!("{}", "─".repeat(60));
+    println!();
+
+    // Print Claude's response if available
+    if let Some(stdout) = &execution_output.stdout {
+        if !stdout.trim().is_empty() {
+            println!("Response:");
+            println!("{}", stdout);
+            println!();
+        }
+    }
+
+    if let Some(log_path) = &execution_output.session_log_path {
+        println!("Session log: {:?}", log_path);
     }
 
     Ok(())

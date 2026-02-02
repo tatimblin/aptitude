@@ -36,7 +36,8 @@ impl ClaudeAdapter {
             .add("NotebookEdit", canonical::NOTEBOOK_EDIT)
             .add("TodoWrite", canonical::TODO_WRITE)
             .add("KillShell", canonical::KILL_SHELL)
-            .add("TaskOutput", canonical::TASK_OUTPUT);
+            .add("TaskOutput", canonical::TASK_OUTPUT)
+            .add("Skill", canonical::SKILL);
 
         Self { mapping }
     }

@@ -2,12 +2,16 @@ name: "Cloud status skill activation"
 prompt: "/cloud-status"
 
 assertions:
-  - tool: execute_command
+  - tool: Skill
     called: true
     params:
-      command: "python3*check_status.py*"
+      skill: "/cloud-status"
 
   - tool: web_fetch
     called: false
     params:
       url: "*amazon.com/*"
+  
+  - tool: Bash
+    params:
+      content: "*python3 scripts/check_status.py"

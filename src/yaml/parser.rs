@@ -13,7 +13,7 @@ use std::path::Path;
 /// Error type for YAML parsing issues.
 #[derive(Debug, thiserror::Error)]
 pub enum YamlError {
-    #[error("Unknown tool: '{0}'. Available tools: Read, Write, Edit, Bash, Glob, Grep, Task, WebFetch, WebSearch, NotebookEdit, AskUserQuestion, TodoWrite")]
+    #[error("Unknown tool: '{0}'. Available tools: Read, Write, Edit, Bash, Glob, Grep, Task, WebFetch, WebSearch, NotebookEdit, AskUserQuestion, TodoWrite, Skill")]
     UnknownTool(String),
 
     #[error("IO error: {0}")]
@@ -145,6 +145,7 @@ pub fn parse_tool_name(s: &str) -> Result<Tool, YamlError> {
         "todowrite" => Ok(Tool::TodoWrite),
         "killshell" => Ok(Tool::KillShell),
         "taskoutput" => Ok(Tool::TaskOutput),
+        "skill" => Ok(Tool::Skill),
 
         // Legacy snake_case aliases (for backward compatibility)
         "read_file" => Ok(Tool::Read),

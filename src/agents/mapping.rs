@@ -22,6 +22,7 @@ pub mod canonical {
     pub const TODO_WRITE: &str = "TodoWrite";
     pub const KILL_SHELL: &str = "KillShell";
     pub const TASK_OUTPUT: &str = "TaskOutput";
+    pub const SKILL: &str = "Skill";
 }
 
 /// Mapping from agent-specific to canonical tool names.

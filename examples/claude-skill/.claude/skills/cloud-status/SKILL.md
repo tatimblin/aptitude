@@ -5,21 +5,13 @@ description: Check if major cloud providers are experiencing outages or degraded
 
 # Cloud Status
 
-Check the operational status of AWS, GCP, Azure, and Cloudflare by querying their public status pages.
+Checks the operational status of AWS, GCP, Azure, and Cloudflare by querying their public status pages.
 
-## Usage
+## Parameters
 
-Run the status check script:
-
-```bash
-# Check all providers
-python3 scripts/check_status.py
-
-# Check specific provider(s)
-python3 scripts/check_status.py aws
-python3 scripts/check_status.py gcp azure
-python3 scripts/check_status.py cloudflare
-```
+- **providers** (optional): Specific providers to check. If not specified, checks all providers.
+  - Valid values: `aws`, `gcp`, `azure`, `cloudflare`
+  - Can specify multiple providers
 
 ## Output
 

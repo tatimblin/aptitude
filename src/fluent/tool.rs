@@ -45,6 +45,8 @@ pub enum Tool {
     KillShell,
     /// Get output from a background task
     TaskOutput,
+    /// Execute a skill
+    Skill,
 }
 
 impl Tool {
@@ -74,6 +76,7 @@ impl Tool {
             Tool::TodoWrite => "TodoWrite",
             Tool::KillShell => "KillShell",
             Tool::TaskOutput => "TaskOutput",
+            Tool::Skill => "Skill",
         }
     }
 
@@ -96,6 +99,7 @@ impl Tool {
             Tool::TodoWrite,
             Tool::KillShell,
             Tool::TaskOutput,
+            Tool::Skill,
         ]
     }
 }

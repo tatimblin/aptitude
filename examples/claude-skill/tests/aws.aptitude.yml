@@ -1,0 +1,18 @@
+name: "Cloud status skill activation"
+prompt: "/cloud-status aws"
+
+assertions:
+  - tool: Skill
+    called: true
+    params:
+      skill: "aws"
+
+  - tool: web_fetch
+    called: false
+    params:
+      url: "*amazon.com/*"
+
+  - tool: Bash
+    called: true
+    params:
+      content: "*python3 scripts/check_status.py aws"

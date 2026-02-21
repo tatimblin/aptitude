@@ -1,5 +1,7 @@
 //! Output formatting for tool calls and responses.
 
+use std::path::PathBuf;
+
 use crate::output::config::{OutputConfig, OutputMode};
 use crate::parser::ToolCall;
 use serde_json::Value;
@@ -12,17 +14,24 @@ const RESET: &str = "\x1b[0m";
 /// Formatter for test output including tool calls and agent responses.
 pub struct OutputFormatter {
     config: OutputConfig,
+    workdir: Option<PathBuf>,
 }
 
 impl OutputFormatter {
     /// Create a new formatter with the given configuration.
     pub fn new(config: OutputConfig) -> Self {
-        Self { config }
+        Self { config, workdir: None }
     }
 
     /// Create a formatter with default configuration.
     pub fn with_defaults() -> Self {
         Self::new(OutputConfig::new())
+    }
+
+    /// Set the working directory for making paths relative in output.
+    pub fn with_workdir(mut self, workdir: Option<PathBuf>) -> Self {
+        self.workdir = workdir;
+        self
     }
 
     /// Check if tool calls should be shown given the test result.
@@ -54,13 +63,31 @@ impl OutputFormatter {
                 .or_else(|| obj.values().next());
 
             match primary {
-                Some(Value::String(s)) => self.truncate(s),
+                Some(Value::String(s)) => self.truncate(&self.make_relative(s)),
                 Some(other) => self.truncate(&other.to_string()),
                 None => String::new(),
             }
         } else {
             params.to_string()
         }
+    }
+
+    /// Strip the working directory prefix from a path string, if applicable.
+    fn make_relative(&self, s: &str) -> String {
+        if let Some(workdir) = &self.workdir {
+            let prefix = workdir.to_string_lossy();
+            let prefix = prefix.as_ref();
+            if s.starts_with(prefix) {
+                let rest = &s[prefix.len()..];
+                // Strip leading separator
+                let rest = rest.strip_prefix('/').unwrap_or(rest);
+                if rest.is_empty() {
+                    return ".".to_string();
+                }
+                return rest.to_string();
+            }
+        }
+        s.to_string()
     }
 
     /// Format a single tool call for display.
@@ -193,5 +220,42 @@ mod tests {
         let formatter = OutputFormatter::new(config);
         assert!(!formatter.should_show_tool_calls(true));
         assert!(!formatter.should_show_tool_calls(false));
+    }
+
+    #[test]
+    fn test_make_relative_strips_workdir() {
+        let formatter = OutputFormatter::new(OutputConfig::new())
+            .with_workdir(Some(PathBuf::from("/home/user/project")));
+        assert_eq!(
+            formatter.make_relative("/home/user/project/src/main.rs"),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_make_relative_no_workdir() {
+        let formatter = OutputFormatter::new(OutputConfig::new());
+        assert_eq!(
+            formatter.make_relative("/home/user/project/src/main.rs"),
+            "/home/user/project/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_make_relative_different_prefix() {
+        let formatter = OutputFormatter::new(OutputConfig::new())
+            .with_workdir(Some(PathBuf::from("/home/user/other")));
+        assert_eq!(
+            formatter.make_relative("/home/user/project/src/main.rs"),
+            "/home/user/project/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_format_params_with_workdir() {
+        let formatter = OutputFormatter::new(OutputConfig::new())
+            .with_workdir(Some(PathBuf::from("/home/user/project")));
+        let params = json!({"file_path": "/home/user/project/src/main.rs"});
+        assert_eq!(formatter.format_params(&params), "src/main.rs");
     }
 }

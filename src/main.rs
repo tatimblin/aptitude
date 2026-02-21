@@ -284,7 +284,9 @@ fn run_single_test(
     }
 
     let mapping = get_mapping(harness, agent_type)?;
-    let formatter = OutputFormatter::new(OutputConfig::verbose());
+    let canonical_workdir = workdir.and_then(|d| d.canonicalize().ok());
+    let formatter = OutputFormatter::new(OutputConfig::verbose())
+        .with_workdir(canonical_workdir.clone());
 
     // Execute in streaming mode
     let handle = harness.execute_streaming(agent_type, &test.prompt, config)?;
@@ -349,7 +351,8 @@ fn run_single_test(
     } else {
         OutputConfig::new()
     };
-    let out_formatter = OutputFormatter::new(output_config);
+    let out_formatter = OutputFormatter::new(output_config)
+        .with_workdir(canonical_workdir);
     out_formatter.print_response(raw_result.stdout.as_deref(), test_passed);
 
     Ok(test_passed)
@@ -535,7 +538,9 @@ fn log_command(
     }
 
     let mapping = get_mapping(harness, cli_agent)?;
-    let formatter = OutputFormatter::new(OutputConfig::verbose());
+    let canonical_workdir = workdir.and_then(|d| d.canonicalize().ok());
+    let formatter = OutputFormatter::new(OutputConfig::verbose())
+        .with_workdir(canonical_workdir);
 
     println!("Tool calls (live):");
     println!("{}", "─".repeat(60));

@@ -64,6 +64,7 @@ pub mod fluent;
 pub mod output;
 pub mod parser;
 pub mod prompt;
+pub mod streaming;
 
 #[cfg(feature = "yaml")]
 pub mod yaml;
@@ -86,6 +87,9 @@ pub use prompt::{prompt, PromptBuilder};
 
 // Output formatting
 pub use output::{OutputConfig, OutputFormatter, OutputMode};
+
+// Streaming
+pub use streaming::{StreamEvent, StreamHandle};
 
 // YAML (feature-gated)
 #[cfg(feature = "yaml")]

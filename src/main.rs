@@ -7,6 +7,8 @@ use aptitude::config::Config;
 use aptitude::discovery::discover_tests;
 use aptitude::output::{OutputConfig, OutputFormatter};
 use aptitude::parser::{parse_jsonl_file, ToolCall};
+use aptitude::agents::ToolNameMapping;
+use aptitude::streaming::{StreamEvent, StreamHandle};
 
 #[cfg(feature = "yaml")]
 use aptitude::yaml::{load_test, run_yaml_test, TestResult};
@@ -210,6 +212,45 @@ fn list_agents(harness: &AgentHarness) {
     println!();
 }
 
+/// Drain all events from a stream handle, normalizing tool names and printing live.
+///
+/// Returns the collected (normalized) tool calls.
+fn drain_stream_events(
+    handle: &StreamHandle,
+    mapping: &ToolNameMapping,
+    formatter: &OutputFormatter,
+) -> Vec<ToolCall> {
+    let mut tool_calls = Vec::new();
+    for event in &handle.receiver {
+        match event {
+            StreamEvent::ToolCall(tc) => {
+                let normalized = ToolCall {
+                    name: mapping.to_canonical(&tc.name),
+                    params: tc.params.clone(),
+                    timestamp: tc.timestamp,
+                };
+                println!("  {}", formatter.format_tool_call(&normalized));
+                tool_calls.push(normalized);
+            }
+            StreamEvent::SessionDetected(path) => {
+                println!("  \x1b[2m[session: {:?}]\x1b[0m", path);
+            }
+            StreamEvent::Error(msg) => {
+                eprintln!("  \x1b[33m[stream error: {}]\x1b[0m", msg);
+            }
+        }
+    }
+    tool_calls
+}
+
+/// Resolve the tool name mapping for a given agent type.
+fn get_mapping(harness: &AgentHarness, agent_type: Option<AgentType>) -> Result<ToolNameMapping> {
+    let resolved = agent_type.unwrap_or(AgentType::Claude);
+    let agent = harness.get_agent(resolved)
+        .ok_or_else(|| anyhow::anyhow!("Agent not found: {:?}", resolved))?;
+    Ok(agent.tool_mapping().clone())
+}
+
 fn run_single_test(
     harness: &AgentHarness,
     test_path: &Path,
@@ -242,21 +283,31 @@ fn run_single_test(
         config = config.with_working_dir(dir.to_path_buf());
     }
 
-    // Execute agent with the prompt
-    let execution_output = harness.execute(agent_type, &test.prompt, config)?;
+    let mapping = get_mapping(harness, agent_type)?;
+    let formatter = OutputFormatter::new(OutputConfig::verbose());
 
-    // Tool calls are already normalized to canonical names
-    let tool_calls = &execution_output.result.tool_calls;
+    // Execute in streaming mode
+    let handle = harness.execute_streaming(agent_type, &test.prompt, config)?;
+
+    println!("Tool calls (live):");
+    println!("{}", "─".repeat(40));
+
+    let tool_calls = drain_stream_events(&handle, &mapping, &formatter);
+
+    println!("{}", "─".repeat(40));
+
+    // Wait for the process to finish
+    let raw_result = handle.wait()?;
 
     println!();
     println!("{} finished. Evaluating assertions...", agent_name);
-    if let Some(log_path) = &execution_output.session_log_path {
+    if let Some(log_path) = &raw_result.session_log_path {
         println!("Session log: {:?}", log_path);
     }
     println!();
 
-    // Evaluate assertions (including stdout assertions)
-    let results = run_yaml_test(&test, tool_calls, &execution_output.stdout);
+    // Evaluate assertions
+    let results = run_yaml_test(&test, &tool_calls, &raw_result.stdout);
 
     let mut passed = 0;
     let mut failed = 0;
@@ -292,15 +343,14 @@ fn run_single_test(
         );
     }
 
-    // Use OutputFormatter for tool calls and response output
+    // Show response if verbose or failed
     let output_config = if verbose {
         OutputConfig::verbose()
     } else {
-        OutputConfig::new() // OnFailure by default
+        OutputConfig::new()
     };
-    let formatter = OutputFormatter::new(output_config);
-    formatter.print_tool_calls(tool_calls, test_passed);
-    formatter.print_response(execution_output.stdout.as_deref(), test_passed);
+    let out_formatter = OutputFormatter::new(output_config);
+    out_formatter.print_response(raw_result.stdout.as_deref(), test_passed);
 
     Ok(test_passed)
 }
@@ -484,34 +534,34 @@ fn log_command(
         config.extra_args.push(m.to_string());
     }
 
-    // Execute agent with the prompt
-    let execution_output = harness.execute(cli_agent, prompt, config)?;
-
-    // Tool calls are already normalized to canonical names
-    let tool_calls = &execution_output.result.tool_calls;
-
-    println!();
-    println!("Tool calls:");
-    println!("{}", "─".repeat(60));
-
+    let mapping = get_mapping(harness, cli_agent)?;
     let formatter = OutputFormatter::new(OutputConfig::verbose());
-    for call in tool_calls {
-        println!("{}", formatter.format_tool_call(call));
-    }
+
+    println!("Tool calls (live):");
+    println!("{}", "─".repeat(60));
+
+    // Execute in streaming mode
+    let handle = harness.execute_streaming(cli_agent, prompt, config)?;
+
+    let tool_calls = drain_stream_events(&handle, &mapping, &formatter);
 
     println!("{}", "─".repeat(60));
     println!();
+    println!("Total: {} tool call(s)", tool_calls.len());
 
-    // Print Claude's response if available
-    if let Some(stdout) = &execution_output.stdout {
+    // Wait for the process to finish and get stdout
+    let raw_result = handle.wait()?;
+
+    if let Some(stdout) = &raw_result.stdout {
         if !stdout.trim().is_empty() {
+            println!();
             println!("Response:");
             println!("{}", stdout);
-            println!();
         }
     }
 
-    if let Some(log_path) = &execution_output.session_log_path {
+    if let Some(log_path) = &raw_result.session_log_path {
+        println!();
         println!("Session log: {:?}", log_path);
     }
 

@@ -31,3 +31,8 @@ mod traits;
 pub use harness::{AgentHarness, AgentType, ExecutionOutput, NormalizedResult};
 pub use mapping::ToolNameMapping;
 pub use traits::{Agent, ExecutionConfig, RawExecutionResult};
+
+// Re-export Claude session helpers for streaming module
+pub(crate) use claude::{
+    find_new_session, get_claude_projects_dir, get_project_dir_for_workdir, list_session_files,
+};

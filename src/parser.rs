@@ -71,7 +71,7 @@ pub fn parse_jsonl_file(path: &Path) -> Result<Vec<ToolCall>> {
 }
 
 /// Internal parsing: check type first, then parse full entry only for assistant messages
-fn parse_line_internal(line: &str) -> Result<Option<Vec<ToolCall>>> {
+pub(crate) fn parse_line_internal(line: &str) -> Result<Option<Vec<ToolCall>>> {
     if line.trim().is_empty() {
         return Ok(None);
     }

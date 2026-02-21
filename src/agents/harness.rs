@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::parser::ToolCall;
+use crate::streaming::{self, StreamHandle};
 use super::claude::ClaudeAdapter;
 use super::mapping::ToolNameMapping;
 use super::traits::{Agent, ExecutionConfig};
@@ -151,6 +152,35 @@ impl AgentHarness {
                 timestamp: call.timestamp,
             })
             .collect()
+    }
+
+    /// Execute an agent in streaming mode, returning a handle for live events.
+    ///
+    /// Tool calls are emitted as raw agent names through the `StreamHandle`'s
+    /// receiver. Use the agent's `tool_mapping()` to normalize names when consuming.
+    ///
+    /// Currently only supports the Claude agent.
+    pub fn execute_streaming(
+        &self,
+        agent_type: Option<AgentType>,
+        prompt: &str,
+        config: ExecutionConfig,
+    ) -> Result<StreamHandle> {
+        let agent_type = agent_type.unwrap_or(self.default_agent);
+
+        let agent = self
+            .agents
+            .get(&agent_type)
+            .ok_or_else(|| anyhow::anyhow!("Agent not registered: {:?}", agent_type))?;
+
+        if !agent.is_available() {
+            bail!(
+                "Agent '{}' is not available on this system",
+                agent.name()
+            );
+        }
+
+        streaming::execute_streaming(prompt, &config)
     }
 
     /// Get an agent by type.

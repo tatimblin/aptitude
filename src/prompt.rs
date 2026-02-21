@@ -36,6 +36,7 @@
 
 use crate::agents::{AgentHarness, AgentType, ExecutionConfig, ExecutionOutput};
 use crate::parser::ToolCall;
+use crate::streaming::StreamHandle;
 use std::path::PathBuf;
 
 /// Create a prompt builder for fluent configuration.
@@ -146,6 +147,37 @@ impl PromptBuilder {
         }
 
         harness.execute(self.agent, &self.text, config)
+    }
+
+    /// Execute the prompt in streaming mode, returning a handle for live events.
+    ///
+    /// Tool calls are emitted in real-time through the `StreamHandle`'s receiver
+    /// as Claude writes them to the session log.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use aptitude::{prompt, StreamEvent};
+    ///
+    /// let handle = prompt("List files").run_streaming().unwrap();
+    ///
+    /// for event in &handle.receiver {
+    ///     if let StreamEvent::ToolCall(tc) = event {
+    ///         println!("Tool: {}", tc.name);
+    ///     }
+    /// }
+    ///
+    /// let result = handle.wait().unwrap();
+    /// ```
+    pub fn run_streaming(self) -> anyhow::Result<StreamHandle> {
+        let harness = AgentHarness::new();
+        let mut config = ExecutionConfig::new();
+
+        if let Some(dir) = self.working_dir {
+            config = config.with_working_dir(dir);
+        }
+
+        harness.execute_streaming(self.agent, &self.text, config)
     }
 
     /// Execute the prompt and return tool calls.

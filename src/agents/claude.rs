@@ -115,7 +115,7 @@ impl Agent for ClaudeAdapter {
 }
 
 /// Get the Claude projects directory.
-fn get_claude_projects_dir() -> Result<PathBuf> {
+pub(crate) fn get_claude_projects_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Could not find home directory")?;
     let claude_dir = home.join(".claude").join("projects");
 
@@ -133,7 +133,7 @@ fn get_claude_projects_dir() -> Result<PathBuf> {
 ///
 /// Claude Code stores sessions in directories named after the working directory path,
 /// with slashes replaced by dashes. E.g., /Users/foo/bar becomes -Users-foo-bar
-fn get_project_dir_for_workdir(
+pub(crate) fn get_project_dir_for_workdir(
     claude_dir: &PathBuf,
     working_dir: &Option<PathBuf>,
 ) -> Result<PathBuf> {
@@ -161,7 +161,7 @@ fn get_project_dir_for_workdir(
 
 /// List all JSONL session files in the claude directory.
 /// Excludes subagent logs (files in /subagents/ directories).
-fn list_session_files(claude_dir: &PathBuf) -> Result<Vec<PathBuf>> {
+pub(crate) fn list_session_files(claude_dir: &PathBuf) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
     if claude_dir.exists() {
@@ -184,7 +184,7 @@ fn list_session_files(claude_dir: &PathBuf) -> Result<Vec<PathBuf>> {
 }
 
 /// Find a new session log file that wasn't in the existing list.
-fn find_new_session(claude_dir: &PathBuf, existing: &[PathBuf]) -> Result<PathBuf> {
+pub(crate) fn find_new_session(claude_dir: &PathBuf, existing: &[PathBuf]) -> Result<PathBuf> {
     let current = list_session_files(claude_dir)?;
 
     // Find files that are new or modified

@@ -214,6 +214,31 @@ impl AgentHarness {
         agent.grade(prompt, model)
     }
 
+    /// Async version of grade for parallel processing.
+    ///
+    /// Resolves the agent type and delegates to [`Agent::grade_async()`].
+    pub async fn grade_async(
+        &self,
+        agent_type: Option<AgentType>,
+        prompt: &str,
+        model: Option<&str>,
+    ) -> Result<String> {
+        let agent_type = agent_type.unwrap_or(self.default_agent);
+        let agent = self
+            .agents
+            .get(&agent_type)
+            .ok_or_else(|| anyhow::anyhow!("Agent not registered: {:?}", agent_type))?;
+
+        if !agent.is_available() {
+            bail!(
+                "Agent '{}' is not available on this system",
+                agent.name()
+            );
+        }
+
+        agent.grade_async(prompt, model).await
+    }
+
     /// List all registered agents.
     pub fn registered_agents(&self) -> Vec<&'static str> {
         self.agents.values().map(|a| a.name()).collect()

@@ -406,6 +406,7 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl Agent for MockGrader {
         fn name(&self) -> &'static str { "mock" }
         fn execute(&self, _: &str, _: &ExecutionConfig) -> anyhow::Result<RawExecutionResult> {

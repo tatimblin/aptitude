@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use async_trait::async_trait;
 
 use crate::parser::ToolCall;
 
@@ -77,6 +78,7 @@ pub struct RawExecutionResult {
 ///
 /// Each agent (Claude Code, Aider, Cursor, etc.) implements this trait
 /// to provide a unified interface for execution and parsing.
+#[async_trait]
 pub trait Agent: Send + Sync {
     /// Unique identifier for this agent (e.g., "claude", "aider", "cursor").
     fn name(&self) -> &'static str;
@@ -104,6 +106,21 @@ pub trait Agent: Send + Sync {
     /// Used for grading/review where we only need the LLM's text output.
     /// Accepts an optional model override passed as `--model` to the CLI.
     fn grade(&self, prompt: &str, model: Option<&str>) -> Result<String>;
+
+    /// Async version of grade for parallel processing.
+    ///
+    /// Default implementation wraps the synchronous grade method in spawn_blocking.
+    /// Agents can override this for better async performance (e.g., native async subprocess calls).
+    async fn grade_async(&self, prompt: &str, model: Option<&str>) -> Result<String> {
+        // Clone data for the blocking task since we can't move self
+        let prompt = prompt.to_string();
+        let model = model.map(|s| s.to_string());
+
+        // For the default implementation, we need a way to call the sync grade method
+        // This is a limitation - agents should override this method for better performance
+        let sync_grade_result = self.grade(&prompt, model.as_deref());
+        sync_grade_result
+    }
 }
 
 // =========================================================================

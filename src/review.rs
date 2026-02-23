@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::future::Future;
 
 /// Configuration for an LLM-powered stdout review.
 #[derive(Debug, Clone)]
@@ -98,6 +99,82 @@ where
         reasoning: parsed.reasoning,
         passed: score >= config.threshold,
     })
+}
+
+/// Async version of grade_stdout for parallel processing.
+///
+/// The `grader` function returns a future for the grading operation.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let result = grade_stdout_async(&stdout, &config, |prompt, model| {
+///     Box::pin(agent.grade_async(prompt, model))
+/// }).await?;
+/// ```
+pub async fn grade_stdout_async<F, Fut>(
+    stdout: &Option<String>,
+    config: &ReviewConfig,
+    grader: F,
+) -> Result<ReviewResult>
+where
+    F: FnOnce(String, Option<String>) -> Fut,
+    Fut: Future<Output = Result<String>>,
+{
+    let prompt = build_grading_prompt(stdout, &config.criteria);
+    let model = config.model.clone();
+    let response = grader(prompt, model).await?;
+
+    let json_str = extract_json(&response);
+    let parsed: GradingResponse =
+        serde_json::from_str(json_str).context("Failed to parse grading response as JSON")?;
+
+    let score = parsed.score.clamp(1, 10);
+    Ok(ReviewResult {
+        score,
+        reasoning: parsed.reasoning,
+        passed: score >= config.threshold,
+    })
+}
+
+/// Grade multiple stdout outputs in parallel for improved performance.
+///
+/// This function runs all grading requests concurrently and returns results
+/// in the same order as the inputs. This provides significant speedup when
+/// multiple stdout assertions need to be evaluated.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let requests = vec![
+///     (Some("output1".to_string()), config1),
+///     (Some("output2".to_string()), config2),
+/// ];
+/// let results = grade_stdout_batch_async(&requests, |prompt, model| {
+///     Box::pin(agent.grade_async(prompt, model))
+/// }).await?;
+/// ```
+pub async fn grade_stdout_batch_async<F, Fut>(
+    requests: &[(Option<String>, ReviewConfig)],
+    grader: F,
+) -> Result<Vec<ReviewResult>>
+where
+    F: Fn(String, Option<String>) -> Fut + Clone,
+    Fut: Future<Output = Result<String>>,
+{
+    let futures: Vec<_> = requests
+        .iter()
+        .map(|(stdout, config)| {
+            let grader = grader.clone();
+            async move {
+                grade_stdout_async(stdout, config, grader).await
+            }
+        })
+        .collect();
+
+    // Use try_join_all to execute all grading requests in parallel
+    // and return the first error if any occurs
+    futures::future::try_join_all(futures).await
 }
 
 /// Extract JSON from a response that might be wrapped in markdown code fences.

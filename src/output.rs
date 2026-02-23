@@ -1,8 +1,25 @@
-//! Output formatting for tool calls and responses.
+//! Output formatting for test results, tool calls, and agent responses.
+//!
+//! Provides configurable output display for the test harness,
+//! with support for showing tool calls and responses either always,
+//! on failure, or never.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use aptitude::output::{OutputConfig, OutputFormatter, OutputMode};
+//!
+//! let config = OutputConfig::new()
+//!     .tool_calls(OutputMode::Always)
+//!     .response(OutputMode::OnFailure);
+//!
+//! let formatter = OutputFormatter::new(config);
+//! formatter.print_tool_calls(&tool_calls, test_passed);
+//! ```
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use crate::output::config::{OutputConfig, OutputMode};
 use crate::parser::ToolCall;
 use serde_json::Value;
 
@@ -10,6 +27,113 @@ use serde_json::Value;
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const RESET: &str = "\x1b[0m";
+
+// =========================================================================
+// Configuration
+// =========================================================================
+
+/// When to display output.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputMode {
+    /// Always show output regardless of test result.
+    Always,
+    /// Only show output when tests fail (default).
+    #[default]
+    OnFailure,
+    /// Never show output.
+    Never,
+}
+
+/// Configuration for output display.
+///
+/// Use the builder pattern to configure what gets displayed:
+///
+/// ```rust,ignore
+/// use aptitude::output::{OutputConfig, OutputMode};
+///
+/// let config = OutputConfig::new()
+///     .tool_calls(OutputMode::Always)
+///     .response(OutputMode::OnFailure)
+///     .truncate_at(80);
+/// ```
+#[derive(Debug, Clone)]
+pub struct OutputConfig {
+    /// When to show tool calls made during execution.
+    pub tool_calls: OutputMode,
+    /// When to show Claude's response output.
+    pub response: OutputMode,
+    /// Maximum characters before truncating parameter values.
+    pub truncate_at: usize,
+    /// Whether to use ANSI colors in output.
+    pub colors_enabled: bool,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            tool_calls: OutputMode::OnFailure,
+            response: OutputMode::OnFailure,
+            truncate_at: 1000,
+            colors_enabled: std::io::stdout().is_terminal(),
+        }
+    }
+}
+
+impl OutputConfig {
+    /// Create a new output configuration with defaults.
+    ///
+    /// Default: `OnFailure` for both tool calls and response,
+    /// 1000 character truncation, colors auto-detected from TTY.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Configure when to show tool calls.
+    pub fn tool_calls(mut self, mode: OutputMode) -> Self {
+        self.tool_calls = mode;
+        self
+    }
+
+    /// Configure when to show Claude's response.
+    pub fn response(mut self, mode: OutputMode) -> Self {
+        self.response = mode;
+        self
+    }
+
+    /// Set the maximum characters before truncating parameter values.
+    pub fn truncate_at(mut self, chars: usize) -> Self {
+        self.truncate_at = chars;
+        self
+    }
+
+    /// Enable or disable ANSI colors.
+    pub fn colors(mut self, enabled: bool) -> Self {
+        self.colors_enabled = enabled;
+        self
+    }
+
+    /// Create a verbose configuration that always shows everything.
+    pub fn verbose() -> Self {
+        Self {
+            tool_calls: OutputMode::Always,
+            response: OutputMode::Always,
+            ..Self::default()
+        }
+    }
+
+    /// Create a quiet configuration that never shows output.
+    pub fn quiet() -> Self {
+        Self {
+            tool_calls: OutputMode::Never,
+            response: OutputMode::Never,
+            ..Self::default()
+        }
+    }
+}
+
+// =========================================================================
+// Formatter
+// =========================================================================
 
 /// Formatter for test output including tool calls and agent responses.
 pub struct OutputFormatter {
@@ -79,7 +203,6 @@ impl OutputFormatter {
             let prefix = prefix.as_ref();
             if s.starts_with(prefix) {
                 let rest = &s[prefix.len()..];
-                // Strip leading separator
                 let rest = rest.strip_prefix('/').unwrap_or(rest);
                 if rest.is_empty() {
                     return ".".to_string();
@@ -93,7 +216,7 @@ impl OutputFormatter {
     /// Format a single tool call for display.
     pub fn format_tool_call(&self, call: &ToolCall) -> String {
         let params_str = self.format_params(&call.params);
-        let timestamp = call.timestamp.format("%H:%M:%S");
+        let timestamp = extract_time(&call.timestamp);
 
         if self.config.colors_enabled {
             format!("  [{timestamp}] {CYAN}{}{RESET} {params_str}", call.name)
@@ -154,10 +277,20 @@ impl OutputFormatter {
         if char_count <= max {
             s.to_string()
         } else {
-            // Reserve 3 chars for "..."
             let truncated: String = s.chars().take(max.saturating_sub(3)).collect();
             format!("{}...", truncated)
         }
+    }
+}
+
+/// Extract HH:MM:SS from an RFC3339 timestamp string.
+/// Falls back to "??:??:??" if the string is too short.
+fn extract_time(ts: &str) -> &str {
+    // RFC3339: "2024-01-19T12:00:00Z" — time starts at index 11, 8 chars
+    if ts.len() >= 19 {
+        &ts[11..19]
+    } else {
+        "??:??:??"
     }
 }
 
@@ -165,6 +298,42 @@ impl OutputFormatter {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_default_config() {
+        let config = OutputConfig::new();
+        assert_eq!(config.tool_calls, OutputMode::OnFailure);
+        assert_eq!(config.response, OutputMode::OnFailure);
+        assert_eq!(config.truncate_at, 1000);
+    }
+
+    #[test]
+    fn test_verbose_config() {
+        let config = OutputConfig::verbose();
+        assert_eq!(config.tool_calls, OutputMode::Always);
+        assert_eq!(config.response, OutputMode::Always);
+    }
+
+    #[test]
+    fn test_quiet_config() {
+        let config = OutputConfig::quiet();
+        assert_eq!(config.tool_calls, OutputMode::Never);
+        assert_eq!(config.response, OutputMode::Never);
+    }
+
+    #[test]
+    fn test_builder_chain() {
+        let config = OutputConfig::new()
+            .tool_calls(OutputMode::Always)
+            .response(OutputMode::Never)
+            .truncate_at(100)
+            .colors(false);
+
+        assert_eq!(config.tool_calls, OutputMode::Always);
+        assert_eq!(config.response, OutputMode::Never);
+        assert_eq!(config.truncate_at, 100);
+        assert!(!config.colors_enabled);
+    }
 
     #[test]
     fn test_truncate_short_string() {
@@ -181,11 +350,9 @@ mod tests {
     #[test]
     fn test_truncate_unicode() {
         let formatter = OutputFormatter::new(OutputConfig::new().truncate_at(6));
-        // Input: "日本語ですよね" (7 chars), truncate_at: 6
-        // Should truncate to 3 chars + "..." = 6 total
-        let result = formatter.truncate("日本語ですよね"); // 7 chars
+        let result = formatter.truncate("日本語ですよね");
         assert!(result.ends_with("..."));
-        assert_eq!(result.chars().count(), 6); // 3 chars + "..."
+        assert_eq!(result.chars().count(), 6);
         assert_eq!(result, "日本語...");
     }
 
@@ -194,7 +361,6 @@ mod tests {
         let formatter = OutputFormatter::new(OutputConfig::new());
         let params = json!({"file_path": "/tmp/test.txt", "content": "hello"});
         let formatted = formatter.format_params(&params);
-        // Should show primary param (file_path) value only
         assert_eq!(formatted, "/tmp/test.txt");
     }
 

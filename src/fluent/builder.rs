@@ -133,10 +133,6 @@ impl ExecutionExpectation {
     }
 }
 
-// Backward compatibility: keep ToolCallExpectation as an alias
-#[doc(hidden)]
-pub type ToolCallExpectation = ExecutionExpectation;
-
 /// Builder for assertions on a specific tool.
 ///
 /// Methods like `to_be_called()` evaluate immediately and panic on failure.
@@ -350,7 +346,7 @@ impl ToolAssertion {
                 self.tool,
                 n,
                 matching_calls.len(),
-                self.format_tool_calls()
+                format_tool_calls(&self.tool_calls)
             );
         }
 
@@ -383,7 +379,7 @@ impl ToolAssertion {
             panic!(
                 "assertion failed: expected {} to have been called\n\n  actual: 0 calls made\n{}",
                 self.tool,
-                self.format_tool_calls()
+                format_tool_calls(&self.tool_calls)
             );
         }
 
@@ -618,39 +614,8 @@ impl ToolAssertion {
             "assertion failed: expected {}\n\n  reason: {}\n{}",
             result.description,
             reason,
-            self.format_tool_calls()
+            format_tool_calls(&self.tool_calls)
         );
-    }
-
-    fn format_tool_calls(&self) -> String {
-        if self.tool_calls.is_empty() {
-            return "  tool calls made: (none)\n".to_string();
-        }
-
-        let mut output = format!("  tool calls made ({}):\n", self.tool_calls.len());
-        for (i, call) in self.tool_calls.iter().enumerate() {
-            let params_preview = call
-                .params
-                .get("file_path")
-                .or_else(|| call.params.get("command"))
-                .or_else(|| call.params.get("pattern"))
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    if s.len() > 50 {
-                        format!("{}...", &s[..47])
-                    } else {
-                        s.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "...".to_string());
-            output.push_str(&format!(
-                "    {}. {} {{ {} }}\n",
-                i + 1,
-                call.name,
-                params_preview
-            ));
-        }
-        output
     }
 }
 
@@ -688,7 +653,7 @@ impl NthCallAssertion {
         if !params_match(&params, &self.call.params) {
             panic!(
                 "assertion failed: {} call #{} params did not match\n\n  expected: {:?}\n  actual: {:?}\n{}",
-                self.tool, self.n, params, self.call.params, self.format_tool_calls()
+                self.tool, self.n, params, self.call.params, format_tool_calls(&self.all_calls)
             );
         }
         self
@@ -730,35 +695,36 @@ impl NthCallAssertion {
     pub fn index(&self) -> usize {
         self.n
     }
+}
 
-    fn format_tool_calls(&self) -> String {
-        if self.all_calls.is_empty() {
-            return "  tool calls made: (none)\n".to_string();
-        }
-
-        let mut output = format!("  tool calls made ({}):\n", self.all_calls.len());
-        for (i, call) in self.all_calls.iter().enumerate() {
-            let params_preview = call
-                .params
-                .get("file_path")
-                .or_else(|| call.params.get("command"))
-                .or_else(|| call.params.get("pattern"))
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    if s.len() > 50 {
-                        format!("{}...", &s[..47])
-                    } else {
-                        s.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "...".to_string());
-            output.push_str(&format!(
-                "    {}. {} {{ {} }}\n",
-                i + 1,
-                call.name,
-                params_preview
-            ));
-        }
-        output
+/// Format tool calls for inclusion in assertion error messages.
+fn format_tool_calls(calls: &[ToolCall]) -> String {
+    if calls.is_empty() {
+        return "  tool calls made: (none)\n".to_string();
     }
+
+    let mut output = format!("  tool calls made ({}):\n", calls.len());
+    for (i, call) in calls.iter().enumerate() {
+        let params_preview = call
+            .params
+            .get("file_path")
+            .or_else(|| call.params.get("command"))
+            .or_else(|| call.params.get("pattern"))
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                if s.len() > 50 {
+                    format!("{}...", &s[..47])
+                } else {
+                    s.to_string()
+                }
+            })
+            .unwrap_or_else(|| "...".to_string());
+        output.push_str(&format!(
+            "    {}. {} {{ {} }}\n",
+            i + 1,
+            call.name,
+            params_preview
+        ));
+    }
+    output
 }

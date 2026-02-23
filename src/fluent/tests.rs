@@ -3,14 +3,13 @@
 use super::*;
 use crate::params;
 use crate::parser::ToolCall;
-use chrono::Utc;
 use serde_json::json;
 
 fn make_call(name: &str, params: serde_json::Value) -> ToolCall {
     ToolCall {
         name: name.to_string(),
         params,
-        timestamp: Utc::now(),
+        timestamp: String::new(),
     }
 }
 

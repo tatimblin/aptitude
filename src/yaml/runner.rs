@@ -353,14 +353,13 @@ fn format_stdout_description(constraints: &StdoutConstraints) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use serde_json::json;
 
     fn make_call(name: &str, params: serde_json::Value) -> ToolCall {
         ToolCall {
             name: name.to_string(),
             params,
-            timestamp: Utc::now(),
+            timestamp: String::new(),
         }
     }
 

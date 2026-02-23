@@ -212,6 +212,35 @@ fn list_agents(harness: &AgentHarness) {
     println!();
 }
 
+/// Print test results and summary. Returns true if all passed.
+fn print_results(results: &[(String, TestResult)]) -> bool {
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for (description, result) in results {
+        match result {
+            TestResult::Pass => {
+                println!("  \x1b[32m✓\x1b[0m {}", description);
+                passed += 1;
+            }
+            TestResult::Fail { reason } => {
+                println!("  \x1b[31m✗\x1b[0m {}", description);
+                println!("    └─ {}", reason);
+                failed += 1;
+            }
+        }
+    }
+
+    let all_passed = failed == 0;
+    println!();
+    if all_passed {
+        println!("\x1b[32mResults: {}/{} passed\x1b[0m", passed, passed + failed);
+    } else {
+        println!("\x1b[31mResults: {}/{} passed\x1b[0m", passed, passed + failed);
+    }
+    all_passed
+}
+
 /// Drain all events from a stream handle, normalizing tool names and printing live.
 ///
 /// Returns the collected (normalized) tool calls.
@@ -227,7 +256,7 @@ fn drain_stream_events(
                 let normalized = ToolCall {
                     name: mapping.to_canonical(&tc.name),
                     params: tc.params.clone(),
-                    timestamp: tc.timestamp,
+                    timestamp: tc.timestamp.clone(),
                 };
                 println!("  {}", formatter.format_tool_call(&normalized));
                 tool_calls.push(normalized);
@@ -310,40 +339,7 @@ fn run_single_test(
 
     // Evaluate assertions
     let results = run_yaml_test(&test, &tool_calls, &raw_result.stdout);
-
-    let mut passed = 0;
-    let mut failed = 0;
-
-    for (description, result) in &results {
-        match result {
-            TestResult::Pass => {
-                println!("  \x1b[32m✓\x1b[0m {}", description);
-                passed += 1;
-            }
-            TestResult::Fail { reason } => {
-                println!("  \x1b[31m✗\x1b[0m {}", description);
-                println!("    └─ {}", reason);
-                failed += 1;
-            }
-        }
-    }
-
-    let test_passed = failed == 0;
-
-    println!();
-    if test_passed {
-        println!(
-            "\x1b[32mResults: {}/{} passed\x1b[0m",
-            passed,
-            passed + failed
-        );
-    } else {
-        println!(
-            "\x1b[31mResults: {}/{} passed\x1b[0m",
-            passed,
-            passed + failed
-        );
-    }
+    let test_passed = print_results(&results);
 
     // Show response if verbose or failed
     let output_config = if verbose {
@@ -446,7 +442,7 @@ fn analyze_session(
         .map(|call| ToolCall {
             name: mapping.to_canonical(&call.name),
             params: call.params.clone(),
-            timestamp: call.timestamp,
+            timestamp: call.timestamp.clone(),
         })
         .collect();
 
@@ -460,9 +456,14 @@ fn analyze_session(
             .or_else(|| call.params.get("command"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let time = if call.timestamp.len() >= 19 {
+            &call.timestamp[11..19]
+        } else {
+            "??:??:??"
+        };
         println!(
             "[{}] {}: {}",
-            call.timestamp.format("%H:%M:%S"),
+            time,
             call.name,
             params_preview
         );
@@ -474,37 +475,9 @@ fn analyze_session(
 
     // Evaluate assertions (stdout not available in analyze mode)
     let results = run_yaml_test(&test, &tool_calls, &None);
+    let all_passed = print_results(&results);
 
-    let mut passed = 0;
-    let mut failed = 0;
-
-    for (description, result) in &results {
-        match result {
-            TestResult::Pass => {
-                println!("  \x1b[32m✓\x1b[0m {}", description);
-                passed += 1;
-            }
-            TestResult::Fail { reason } => {
-                println!("  \x1b[31m✗\x1b[0m {}", description);
-                println!("    └─ {}", reason);
-                failed += 1;
-            }
-        }
-    }
-
-    println!();
-    if failed == 0 {
-        println!(
-            "\x1b[32mResults: {}/{} passed\x1b[0m",
-            passed,
-            passed + failed
-        );
-    } else {
-        println!(
-            "\x1b[31mResults: {}/{} passed\x1b[0m",
-            passed,
-            passed + failed
-        );
+    if !all_passed {
         std::process::exit(1);
     }
 

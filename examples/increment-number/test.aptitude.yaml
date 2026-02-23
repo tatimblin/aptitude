@@ -1,0 +1,20 @@
+name: "Increment number and report"
+prompt: "Read counter.txt, run increment.sh to increment the number, and tell me the new value."
+
+assertions:
+  - tool: Read
+    called: true
+    params:
+      file_path: "counter.txt"
+
+  - tool: Bash
+    called: true
+    params:
+      command: ".*increment\\.sh.*"
+
+  - tool: Bash
+    called_after: Read
+
+  - stdout:
+      review: "should state the number was incremented and report the new value (43), in no more than two sentences"
+      threshold: 6

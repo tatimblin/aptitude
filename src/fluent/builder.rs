@@ -6,12 +6,14 @@
 //! - `ExecutionExpectation` - Holds execution output and creates specific assertions
 //! - `ToolAssertion` - Builder for assertions on a specific tool
 
-use crate::agents::ExecutionOutput;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::agents::{Agent, ExecutionOutput};
 use crate::parser::ToolCall;
 use super::matchers::params_match;
 use super::stdout::StdoutAssertion;
 use super::Tool;
-use std::collections::HashMap;
 
 /// Result of evaluating an assertion.
 #[derive(Debug, Clone)]
@@ -82,10 +84,21 @@ pub fn expect_tools(tool_calls: &[ToolCall]) -> ExecutionExpectation {
 /// This is the starting point for building assertions. Call `.tool()` to
 /// create a `ToolAssertion` for a specific tool type, or `.stdout()` to
 /// create a `StdoutAssertion` for stdout content.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExecutionExpectation {
     tool_calls: Vec<ToolCall>,
     stdout: Option<String>,
+    grader: Option<Arc<dyn Agent>>,
+}
+
+impl std::fmt::Debug for ExecutionExpectation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecutionExpectation")
+            .field("tool_calls", &self.tool_calls)
+            .field("stdout", &self.stdout)
+            .field("grader", &self.grader.as_ref().map(|g| g.name()))
+            .finish()
+    }
 }
 
 impl ExecutionExpectation {
@@ -94,6 +107,7 @@ impl ExecutionExpectation {
         Self {
             tool_calls: output.result.tool_calls.clone(),
             stdout: output.stdout.clone(),
+            grader: None,
         }
     }
 
@@ -102,7 +116,27 @@ impl ExecutionExpectation {
         Self {
             tool_calls: tool_calls.to_vec(),
             stdout: None,
+            grader: None,
         }
+    }
+
+    /// Set the grading agent for stdout review assertions.
+    ///
+    /// This agent will be used to invoke the LLM for grading stdout content.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let grader = harness.get_agent(AgentType::Claude).unwrap().clone();
+    /// expect(&output)
+    ///     .with_grader(grader)
+    ///     .stdout()
+    ///     .review("should confirm success")
+    ///     .to_pass();
+    /// ```
+    pub fn with_grader(mut self, agent: Arc<dyn Agent>) -> Self {
+        self.grader = Some(agent);
+        self
     }
 
     /// Create an assertion for a specific tool.
@@ -120,16 +154,24 @@ impl ExecutionExpectation {
 
     /// Create an assertion for stdout content.
     ///
+    /// If a grading agent has been set via `.with_grader()`, it will be
+    /// automatically passed to the `StdoutAssertion`.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
     /// expect(&output)
+    ///     .with_grader(agent)
     ///     .stdout()
-    ///     .contains("success")
-    ///     .to_exist();
+    ///     .review("should confirm success")
+    ///     .to_pass();
     /// ```
     pub fn stdout(&self) -> StdoutAssertion {
-        StdoutAssertion::new(self.stdout.clone())
+        let mut assertion = StdoutAssertion::new(self.stdout.clone());
+        if let Some(grader) = &self.grader {
+            assertion = assertion.with_grader(grader.clone());
+        }
+        assertion
     }
 }
 

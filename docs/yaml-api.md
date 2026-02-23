@@ -175,24 +175,35 @@ assertions:
       file_path: "*index.ts"
 ```
 
-#### Stdout Assertions
+#### Stdout Assertions (LLM-Powered Review)
 
-| Field | Description |
-|-------|-------------|
-| `stdout.exists` | Whether stdout should exist (default: `true`) |
-| `stdout.contains` | Assert stdout contains this substring |
-| `stdout.not_contains` | Assert stdout does NOT contain this substring |
-| `stdout.matches` | Assert stdout matches this regex pattern |
-| `stdout.not_matches` | Assert stdout does NOT match this regex pattern |
+Stdout assertions use an LLM to grade the agent's text output against natural language criteria. Instead of brittle substring or regex matching, you describe what the output should look like and the grading LLM scores it on a 1-10 scale.
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `stdout.review` | Yes | - | Natural language criteria for grading stdout |
+| `stdout.threshold` | No | `7` | Minimum score to pass (1-10 scale) |
+| `stdout.model` | No | - | Model override for the grading agent (e.g., `claude-sonnet-4-20250514`) |
+| `stdout.agent` | No | Test's agent | Agent to use for grading |
 
 ```yaml
 assertions:
+  # Basic review
   - stdout:
-      exists: true
-      contains: "success"
-      not_contains: "error"
-      matches: "completed.*\\d+ items"
+      review: "should say the task was completed successfully and be concise"
+
+  # With custom threshold and model
+  - stdout:
+      review: "should list exactly 3 items in a numbered list"
+      threshold: 8
+      model: "claude-sonnet-4-20250514"
 ```
+
+The grading LLM evaluates the output and returns a score:
+- **1-3**: Clearly fails the criteria
+- **4-6**: Partially meets the criteria
+- **7-9**: Meets the criteria well
+- **10**: Perfectly meets the criteria
 
 ## Tool Names
 
@@ -361,7 +372,7 @@ assertions:
       url: "*amazon.com/*"
 ```
 
-### Stdout Verification Test
+### Stdout Review Test
 
 ```yaml
 name: "Output verification"
@@ -374,7 +385,6 @@ assertions:
       command: "*build*"
 
   - stdout:
-      exists: true
-      contains: "Build successful"
-      not_contains: "error"
+      review: "should indicate the build completed successfully without errors"
+      threshold: 7
 ```

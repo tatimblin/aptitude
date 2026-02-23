@@ -4,8 +4,12 @@
 //! and collects the results. It acts as a thin adapter layer, delegating
 //! all assertion logic to the fluent API.
 
-use crate::fluent::{expect_tools, AssertionResult, StdoutAssertion, Tool};
+use std::sync::Arc;
+
+use crate::agents::Agent;
+use crate::fluent::{expect_tools, AssertionResult, Tool};
 use crate::parser::ToolCall;
+use crate::review::{self, ReviewConfig};
 
 use super::parser::{parse_tool_name, Assertion, StdoutConstraints, Test};
 
@@ -65,6 +69,7 @@ pub fn run_yaml_test(
     test: &Test,
     tool_calls: &[ToolCall],
     stdout: &Option<String>,
+    grader: Option<&Arc<dyn Agent>>,
 ) -> Vec<(String, TestResult)> {
     let mut results = Vec::new();
 
@@ -72,7 +77,7 @@ pub fn run_yaml_test(
         // Check if this is a stdout assertion
         if let Some(stdout_constraints) = &assertion.stdout {
             let description = format_stdout_description(stdout_constraints);
-            let result = evaluate_stdout_assertion(stdout_constraints, stdout);
+            let result = evaluate_stdout_assertion(stdout_constraints, stdout, grader);
             results.push((description, result));
             continue;
         }
@@ -249,30 +254,49 @@ fn evaluate_last_params(
     result.into()
 }
 
-/// Evaluate stdout assertion using the fluent API.
-fn evaluate_stdout_assertion(constraints: &StdoutConstraints, stdout: &Option<String>) -> TestResult {
-    let mut builder = StdoutAssertion::new(stdout.clone());
-
-    if let Some(s) = &constraints.contains {
-        builder = builder.contains(s);
-    }
-    if let Some(s) = &constraints.not_contains {
-        builder = builder.not_contains(s);
-    }
-    if let Some(s) = &constraints.matches {
-        builder = builder.matches(s);
-    }
-    if let Some(s) = &constraints.not_matches {
-        builder = builder.not_matches(s);
-    }
-
-    let result = if constraints.exists {
-        builder.evaluate()
-    } else {
-        builder.evaluate_empty()
+/// Evaluate stdout assertion using LLM-powered review.
+fn evaluate_stdout_assertion(
+    constraints: &StdoutConstraints,
+    stdout: &Option<String>,
+    grader: Option<&Arc<dyn Agent>>,
+) -> TestResult {
+    let grader = match grader {
+        Some(g) => g,
+        None => {
+            return TestResult::Fail {
+                reason: "No grading agent available for stdout review".to_string(),
+            }
+        }
     };
 
-    result.into()
+    let config = ReviewConfig {
+        criteria: constraints.review.clone(),
+        threshold: constraints.threshold,
+        model: constraints.model.clone(),
+    };
+
+    let grader_ref = grader.clone();
+    let result = review::grade_stdout(stdout, &config, |prompt, model| {
+        grader_ref.grade(prompt, model)
+    });
+
+    match result {
+        Ok(review_result) => {
+            if review_result.passed {
+                TestResult::Pass
+            } else {
+                TestResult::Fail {
+                    reason: format!(
+                        "score {}/10 below threshold {} — {}",
+                        review_result.score, constraints.threshold, review_result.reasoning
+                    ),
+                }
+            }
+        }
+        Err(e) => TestResult::Fail {
+            reason: format!("grading failed: {}", e),
+        },
+    }
 }
 
 // =========================================================================
@@ -326,34 +350,17 @@ fn format_assertion_description(assertion: &Assertion) -> String {
 }
 
 fn format_stdout_description(constraints: &StdoutConstraints) -> String {
-    let mut parts = vec!["stdout".to_string()];
-
-    if constraints.exists {
-        parts.push("exists".to_string());
-    } else {
-        parts.push("is empty".to_string());
-    }
-
-    if let Some(s) = &constraints.contains {
-        parts.push(format!("contains '{}'", s));
-    }
-    if let Some(s) = &constraints.not_contains {
-        parts.push(format!("not contains '{}'", s));
-    }
-    if let Some(s) = &constraints.matches {
-        parts.push(format!("matches '{}'", s));
-    }
-    if let Some(s) = &constraints.not_matches {
-        parts.push(format!("not matches '{}'", s));
-    }
-
-    parts.join(", ")
+    format!(
+        "stdout review: \"{}\" (threshold: {}/10)",
+        constraints.review, constraints.threshold
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use crate::agents::{ExecutionConfig, RawExecutionResult, ToolNameMapping};
 
     fn make_call(name: &str, params: serde_json::Value) -> ToolCall {
         ToolCall {
@@ -380,6 +387,41 @@ mod tests {
         }
     }
 
+    /// Mock agent for grading tests.
+    struct MockGrader {
+        response: String,
+    }
+
+    impl MockGrader {
+        fn passing() -> Arc<dyn Agent> {
+            Arc::new(Self {
+                response: r#"{"score": 9, "reasoning": "Meets criteria"}"#.to_string(),
+            })
+        }
+
+        fn failing() -> Arc<dyn Agent> {
+            Arc::new(Self {
+                response: r#"{"score": 3, "reasoning": "Does not meet criteria"}"#.to_string(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Agent for MockGrader {
+        fn name(&self) -> &'static str { "mock" }
+        fn execute(&self, _: &str, _: &ExecutionConfig) -> anyhow::Result<RawExecutionResult> {
+            unimplemented!()
+        }
+        fn parse_session(&self, _: &RawExecutionResult) -> anyhow::Result<Vec<ToolCall>> {
+            unimplemented!()
+        }
+        fn tool_mapping(&self) -> &ToolNameMapping { unimplemented!() }
+        fn is_available(&self) -> bool { true }
+        fn grade(&self, _: &str, _: Option<&str>) -> anyhow::Result<String> {
+            Ok(self.response.clone())
+        }
+    }
+
     #[test]
     fn test_run_yaml_test_basic() {
         let test = Test {
@@ -390,7 +432,7 @@ mod tests {
         };
 
         let calls = vec![make_call("Read", json!({"file_path": "/test.txt"}))];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
@@ -409,7 +451,7 @@ mod tests {
         };
 
         let calls = vec![make_call("Read", json!({"file_path": "/test.txt"}))];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
@@ -421,11 +463,11 @@ mod tests {
             name: "Test".to_string(),
             prompt: "Test prompt".to_string(),
             agent: None,
-            assertions: vec![make_assertion("read")], // lowercase
+            assertions: vec![make_assertion("read")],
         };
 
         let calls = vec![make_call("Read", json!({"file_path": "/test.txt"}))];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
@@ -437,11 +479,11 @@ mod tests {
             name: "Test".to_string(),
             prompt: "Test prompt".to_string(),
             agent: None,
-            assertions: vec![make_assertion("read_file")], // alias
+            assertions: vec![make_assertion("read_file")],
         };
 
         let calls = vec![make_call("Read", json!({"file_path": "/test.txt"}))];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
@@ -463,7 +505,7 @@ mod tests {
             make_call("Read", json!({"file_path": "/a.txt"})),
             make_call("Read", json!({"file_path": "/b.txt"})),
         ];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
@@ -485,7 +527,7 @@ mod tests {
             make_call("Read", json!({"file_path": "/input.txt"})),
             make_call("Write", json!({"file_path": "/output.txt"})),
         ];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
@@ -513,16 +555,16 @@ mod tests {
             make_call("Read", json!({"file_path": "/first.txt"})),
             make_call("Read", json!({"file_path": "/second.txt"})),
         ];
-        let results = run_yaml_test(&test, &calls, &None);
+        let results = run_yaml_test(&test, &calls, &None, None);
 
-        // Should have 2 results: main assertion + nth_call_params
         assert_eq!(results.len(), 2);
-        assert!(results[0].1.is_pass()); // Main assertion
-        assert!(results[1].1.is_pass()); // nth_call_params
+        assert!(results[0].1.is_pass());
+        assert!(results[1].1.is_pass());
     }
 
     #[test]
-    fn test_run_yaml_test_stdout() {
+    fn test_run_yaml_test_stdout_review_pass() {
+        let grader = MockGrader::passing();
         let test = Test {
             name: "Test".to_string(),
             prompt: "Test prompt".to_string(),
@@ -540,24 +582,24 @@ mod tests {
                 first_call_params: None,
                 last_call_params: None,
                 stdout: Some(StdoutConstraints {
-                    exists: true,
-                    contains: Some("success".to_string()),
-                    not_contains: Some("error".to_string()),
-                    matches: None,
-                    not_matches: None,
+                    review: "should confirm success".to_string(),
+                    threshold: 7,
+                    model: None,
+                    agent: None,
                 }),
             }],
         };
 
-        let stdout = Some("Operation completed with success".to_string());
-        let results = run_yaml_test(&test, &[], &stdout);
+        let stdout = Some("Operation completed successfully".to_string());
+        let results = run_yaml_test(&test, &[], &stdout, Some(&grader));
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_pass());
     }
 
     #[test]
-    fn test_run_yaml_test_stdout_fails() {
+    fn test_run_yaml_test_stdout_review_fail() {
+        let grader = MockGrader::failing();
         let test = Test {
             name: "Test".to_string(),
             prompt: "Test prompt".to_string(),
@@ -575,19 +617,58 @@ mod tests {
                 first_call_params: None,
                 last_call_params: None,
                 stdout: Some(StdoutConstraints {
-                    exists: true,
-                    contains: Some("success".to_string()),
-                    not_contains: None,
-                    matches: None,
-                    not_matches: None,
+                    review: "should confirm success".to_string(),
+                    threshold: 7,
+                    model: None,
+                    agent: None,
                 }),
             }],
         };
 
         let stdout = Some("Operation failed with error".to_string());
-        let results = run_yaml_test(&test, &[], &stdout);
+        let results = run_yaml_test(&test, &[], &stdout, Some(&grader));
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_fail());
+    }
+
+    #[test]
+    fn test_run_yaml_test_stdout_no_grader() {
+        let test = Test {
+            name: "Test".to_string(),
+            prompt: "Test prompt".to_string(),
+            agent: None,
+            assertions: vec![Assertion {
+                tool: None,
+                called: true,
+                params: None,
+                called_after: None,
+                called_before: None,
+                call_count: None,
+                max_calls: None,
+                min_calls: None,
+                nth_call_params: None,
+                first_call_params: None,
+                last_call_params: None,
+                stdout: Some(StdoutConstraints {
+                    review: "should confirm success".to_string(),
+                    threshold: 7,
+                    model: None,
+                    agent: None,
+                }),
+            }],
+        };
+
+        let stdout = Some("test".to_string());
+        let results = run_yaml_test(&test, &[], &stdout, None);
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_fail());
+        match &results[0].1 {
+            TestResult::Fail { reason } => {
+                assert!(reason.contains("No grading agent"));
+            }
+            _ => panic!("Expected failure"),
+        }
     }
 }

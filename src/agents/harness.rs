@@ -10,8 +10,7 @@ use std::sync::Arc;
 use crate::parser::ToolCall;
 use crate::streaming::{self, StreamHandle};
 use super::claude::ClaudeAdapter;
-use super::mapping::ToolNameMapping;
-use super::traits::{Agent, ExecutionConfig};
+use super::{Agent, ExecutionConfig, ToolNameMapping};
 
 /// Supported agent types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -149,7 +148,7 @@ impl AgentHarness {
             .map(|call| ToolCall {
                 name: mapping.to_canonical(&call.name),
                 params: call.params.clone(),
-                timestamp: call.timestamp,
+                timestamp: call.timestamp.clone(),
             })
             .collect()
     }

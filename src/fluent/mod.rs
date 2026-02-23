@@ -37,7 +37,6 @@ mod tool;
 
 pub use builder::{
     expect, expect_tools, AssertionResult, ExecutionExpectation, NthCallAssertion, ToolAssertion,
-    ToolCallExpectation,
 };
 pub use matchers::params_match;
 pub use stdout::StdoutAssertion;

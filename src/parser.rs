@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs::File;
@@ -11,7 +10,8 @@ use std::path::Path;
 pub struct ToolCall {
     pub name: String,
     pub params: Value,
-    pub timestamp: DateTime<Utc>,
+    /// RFC3339 timestamp string from the session log (e.g. "2024-01-19T12:00:00Z").
+    pub timestamp: String,
 }
 
 /// Lightweight struct to check entry type before full parse
@@ -95,10 +95,8 @@ pub(crate) fn parse_line_internal(line: &str) -> Result<Option<Vec<ToolCall>>> {
 fn extract_tool_calls(entry: &LogEntry) -> Option<Vec<ToolCall>> {
     let timestamp = entry
         .timestamp
-        .as_ref()
-        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+        .clone()
+        .unwrap_or_default();
 
     let message = entry.message.as_ref()?;
     let content = message.content.as_ref()?;
@@ -109,7 +107,7 @@ fn extract_tool_calls(entry: &LogEntry) -> Option<Vec<ToolCall>> {
             ContentBlock::ToolUse { name, input, .. } => Some(ToolCall {
                 name: name.clone(),
                 params: input.clone(),
-                timestamp,
+                timestamp: timestamp.clone(),
             }),
             _ => None,
         })

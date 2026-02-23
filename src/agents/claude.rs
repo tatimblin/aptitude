@@ -7,8 +7,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::parser::{parse_jsonl_file, ToolCall};
-use super::mapping::{canonical, ToolNameMapping};
-use super::traits::{Agent, ExecutionConfig, RawExecutionResult};
+use super::{Agent, ExecutionConfig, RawExecutionResult, ToolNameMapping};
 
 /// Claude Code agent adapter.
 pub struct ClaudeAdapter {
@@ -17,29 +16,11 @@ pub struct ClaudeAdapter {
 
 impl ClaudeAdapter {
     pub fn new() -> Self {
-        let mut mapping = ToolNameMapping::new();
-
-        // Claude's tool names are already canonical - map to same names
-        // This preserves the actual tool names from JSONL output
-        mapping
-            .add("Read", canonical::READ)
-            .add("Write", canonical::WRITE)
-            .add("Edit", canonical::EDIT)
-            .add("Bash", canonical::BASH)
-            .add("Grep", canonical::GREP)
-            .add("Glob", canonical::GLOB)
-            .add("LS", canonical::LIST_DIRECTORY)
-            .add("AskUserQuestion", canonical::ASK_USER)
-            .add("Task", canonical::TASK)
-            .add("WebFetch", canonical::WEB_FETCH)
-            .add("WebSearch", canonical::WEB_SEARCH)
-            .add("NotebookEdit", canonical::NOTEBOOK_EDIT)
-            .add("TodoWrite", canonical::TODO_WRITE)
-            .add("KillShell", canonical::KILL_SHELL)
-            .add("TaskOutput", canonical::TASK_OUTPUT)
-            .add("Skill", canonical::SKILL);
-
-        Self { mapping }
+        // Claude's tool names are already canonical — no mapping needed.
+        // The ToolNameMapping fallback returns the original name unchanged.
+        Self {
+            mapping: ToolNameMapping::new(),
+        }
     }
 }
 

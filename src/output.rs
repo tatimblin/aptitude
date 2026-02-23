@@ -18,7 +18,7 @@
 //! ```
 
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::parser::ToolCall;
 use serde_json::Value;
@@ -66,6 +66,8 @@ pub struct OutputConfig {
     pub truncate_at: usize,
     /// Whether to use ANSI colors in output.
     pub colors_enabled: bool,
+    /// Whether to emit OSC 8 terminal hyperlinks.
+    pub hyperlinks_enabled: bool,
 }
 
 impl Default for OutputConfig {
@@ -75,8 +77,38 @@ impl Default for OutputConfig {
             response: OutputMode::OnFailure,
             truncate_at: 1000,
             colors_enabled: std::io::stdout().is_terminal(),
+            hyperlinks_enabled: detect_hyperlinks(),
         }
     }
+}
+
+/// Detect whether the terminal supports OSC 8 hyperlinks.
+///
+/// Checks a known-good allowlist of terminal emulators via `TERM_PROGRAM`,
+/// requires stdout to be a TTY, and disables inside tmux/screen where
+/// passthrough is unreliable.
+fn detect_hyperlinks() -> bool {
+    if !std::io::stdout().is_terminal() {
+        return false;
+    }
+    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() {
+        return false;
+    }
+    const SUPPORTED_TERMINALS: &[&str] = &[
+        "iTerm.app",
+        "WezTerm",
+        "kitty",
+        "vscode",
+        "Hyper",
+        "Tabby",
+    ];
+    if let Some(term_program) = std::env::var_os("TERM_PROGRAM") {
+        return SUPPORTED_TERMINALS
+            .iter()
+            .any(|t| term_program == *t);
+    }
+    // Windows Terminal sets WT_SESSION instead of TERM_PROGRAM
+    std::env::var_os("WT_SESSION").is_some()
 }
 
 impl OutputConfig {
@@ -109,6 +141,12 @@ impl OutputConfig {
     /// Enable or disable ANSI colors.
     pub fn colors(mut self, enabled: bool) -> Self {
         self.colors_enabled = enabled;
+        self
+    }
+
+    /// Enable or disable OSC 8 terminal hyperlinks.
+    pub fn hyperlinks(mut self, enabled: bool) -> Self {
+        self.hyperlinks_enabled = enabled;
         self
     }
 
@@ -268,6 +306,32 @@ impl OutputFormatter {
         }
     }
 
+    /// Format a session path for display.
+    ///
+    /// Shows only the file stem (typically a UUID) instead of the full path.
+    /// When the terminal supports OSC 8 hyperlinks, wraps the stem in a
+    /// clickable `file://` link. In verbose mode, appends the full path
+    /// on a second line.
+    pub fn format_session_path(&self, path: &Path, verbose: bool) -> String {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+
+        let display = if self.config.hyperlinks_enabled {
+            let uri = path_to_file_uri(path);
+            format!("\x1b]8;;{uri}\x1b\\{stem}\x1b]8;;\x1b\\")
+        } else {
+            stem.to_string()
+        };
+
+        if verbose {
+            format!("{display}\n    {}", path.display())
+        } else {
+            display
+        }
+    }
+
     /// Truncate a string to the configured maximum length.
     /// Handles multi-byte UTF-8 characters safely.
     fn truncate(&self, s: &str) -> String {
@@ -292,6 +356,17 @@ fn extract_time(ts: &str) -> &str {
     } else {
         "??:??:??"
     }
+}
+
+/// Convert a filesystem path to a `file://` URI.
+///
+/// Resolves the path to an absolute path via `canonicalize` (falling back
+/// to the original if the file doesn't exist yet) and percent-encodes
+/// spaces per RFC 3986.
+fn path_to_file_uri(path: &Path) -> String {
+    let absolute = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path_str = absolute.to_string_lossy().replace(' ', "%20");
+    format!("file://{path_str}")
 }
 
 #[cfg(test)]
@@ -423,5 +498,70 @@ mod tests {
             .with_workdir(Some(PathBuf::from("/home/user/project")));
         let params = json!({"file_path": "/home/user/project/src/main.rs"});
         assert_eq!(formatter.format_params(&params), "src/main.rs");
+    }
+
+    // ── Session path / hyperlink tests ──────────────────────────────
+
+    #[test]
+    fn test_file_uri_construction() {
+        let uri = path_to_file_uri(Path::new("/tmp/sessions/abc-123.jsonl"));
+        assert_eq!(uri, "file:///tmp/sessions/abc-123.jsonl");
+    }
+
+    #[test]
+    fn test_file_uri_spaces_are_encoded() {
+        let uri = path_to_file_uri(Path::new("/tmp/my sessions/abc.jsonl"));
+        assert_eq!(uri, "file:///tmp/my%20sessions/abc.jsonl");
+    }
+
+    #[test]
+    fn test_format_session_path_plain() {
+        let config = OutputConfig::new().hyperlinks(false);
+        let formatter = OutputFormatter::new(config);
+        let path = Path::new("/home/user/.claude/projects/test/fdbb606e-98de-49f3-896c-0aa1b4e57af1.jsonl");
+        let result = formatter.format_session_path(path, false);
+        assert_eq!(result, "fdbb606e-98de-49f3-896c-0aa1b4e57af1");
+    }
+
+    #[test]
+    fn test_format_session_path_non_uuid_stem() {
+        let config = OutputConfig::new().hyperlinks(false);
+        let formatter = OutputFormatter::new(config);
+        let path = Path::new("/tmp/my-session.jsonl");
+        let result = formatter.format_session_path(path, false);
+        assert_eq!(result, "my-session");
+    }
+
+    #[test]
+    fn test_format_session_path_with_hyperlink() {
+        let config = OutputConfig::new().hyperlinks(true);
+        let formatter = OutputFormatter::new(config);
+        let path = Path::new("/tmp/abc-123.jsonl");
+        let result = formatter.format_session_path(path, false);
+        assert!(result.starts_with("\x1b]8;;file:///"));
+        assert!(result.contains("abc-123.jsonl"));
+        assert!(result.contains("abc-123"));
+        assert!(result.ends_with("\x1b]8;;\x1b\\"));
+    }
+
+    #[test]
+    fn test_format_session_path_hyperlink_disabled_no_escapes() {
+        let config = OutputConfig::new().hyperlinks(false);
+        let formatter = OutputFormatter::new(config);
+        let path = Path::new("/tmp/abc-123.jsonl");
+        let result = formatter.format_session_path(path, false);
+        assert!(!result.contains("\x1b"));
+        assert_eq!(result, "abc-123");
+    }
+
+    #[test]
+    fn test_format_session_path_verbose_shows_full_path() {
+        let config = OutputConfig::new().hyperlinks(false);
+        let formatter = OutputFormatter::new(config);
+        let path = Path::new("/home/user/.claude/projects/test/abc-123.jsonl");
+        let result = formatter.format_session_path(path, true);
+        assert!(result.contains("abc-123"));
+        assert!(result.contains("/home/user/.claude/projects/test/abc-123.jsonl"));
+        assert!(result.contains('\n'));
     }
 }

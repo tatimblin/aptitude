@@ -248,6 +248,7 @@ fn drain_stream_events(
     handle: &StreamHandle,
     mapping: &ToolNameMapping,
     formatter: &OutputFormatter,
+    verbose: bool,
 ) -> Vec<ToolCall> {
     let mut tool_calls = Vec::new();
     for event in &handle.receiver {
@@ -262,7 +263,8 @@ fn drain_stream_events(
                 tool_calls.push(normalized);
             }
             StreamEvent::SessionDetected(path) => {
-                println!("  \x1b[2m[session: {:?}]\x1b[0m", path);
+                let formatted = formatter.format_session_path(&path, verbose);
+                println!("  \x1b[2m[session: {}]\x1b[0m", formatted);
             }
             StreamEvent::Error(msg) => {
                 eprintln!("  \x1b[33m[stream error: {}]\x1b[0m", msg);
@@ -323,7 +325,7 @@ fn run_single_test(
     println!("Tool calls (live):");
     println!("{}", "─".repeat(40));
 
-    let tool_calls = drain_stream_events(&handle, &mapping, &formatter);
+    let tool_calls = drain_stream_events(&handle, &mapping, &formatter, verbose);
 
     println!("{}", "─".repeat(40));
 
@@ -333,7 +335,7 @@ fn run_single_test(
     println!();
     println!("{} finished. Evaluating assertions...", agent_name);
     if let Some(log_path) = &raw_result.session_log_path {
-        println!("Session log: {:?}", log_path);
+        println!("Session log: {}", formatter.format_session_path(log_path, verbose));
     }
     println!();
 
@@ -425,9 +427,10 @@ fn analyze_session(
         .or_else(|| test.agent.as_ref().and_then(|s| AgentType::from_str(s)))
         .unwrap_or(AgentType::Claude);
 
+    let formatter = OutputFormatter::with_defaults();
     println!();
     println!("Analyzing: \"{}\"", test.name);
-    println!("Session: {:?}", session_path);
+    println!("Session: {}", formatter.format_session_path(session_path, false));
     println!("Agent: {}", agent_type.as_str());
     println!();
 
@@ -523,7 +526,7 @@ fn log_command(
     // Execute in streaming mode
     let handle = harness.execute_streaming(cli_agent, prompt, config)?;
 
-    let tool_calls = drain_stream_events(&handle, &mapping, &formatter);
+    let tool_calls = drain_stream_events(&handle, &mapping, &formatter, false);
 
     println!("{}", "─".repeat(60));
     println!();
@@ -542,7 +545,7 @@ fn log_command(
 
     if let Some(log_path) = &raw_result.session_log_path {
         println!();
-        println!("Session log: {:?}", log_path);
+        println!("Session log: {}", formatter.format_session_path(log_path, false));
     }
 
     Ok(())

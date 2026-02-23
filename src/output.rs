@@ -91,24 +91,11 @@ fn detect_hyperlinks() -> bool {
     if !std::io::stdout().is_terminal() {
         return false;
     }
+    // tmux/screen may not pass through OSC 8 reliably
     if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() {
         return false;
     }
-    const SUPPORTED_TERMINALS: &[&str] = &[
-        "iTerm.app",
-        "WezTerm",
-        "kitty",
-        "vscode",
-        "Hyper",
-        "Tabby",
-    ];
-    if let Some(term_program) = std::env::var_os("TERM_PROGRAM") {
-        return SUPPORTED_TERMINALS
-            .iter()
-            .any(|t| term_program == *t);
-    }
-    // Windows Terminal sets WT_SESSION instead of TERM_PROGRAM
-    std::env::var_os("WT_SESSION").is_some()
+    true
 }
 
 impl OutputConfig {

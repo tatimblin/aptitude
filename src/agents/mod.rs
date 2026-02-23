@@ -98,6 +98,12 @@ pub trait Agent: Send + Sync {
 
     /// Check if this agent is available on the system.
     fn is_available(&self) -> bool;
+
+    /// Run a prompt and return only the text response (no session log tracking).
+    ///
+    /// Used for grading/review where we only need the LLM's text output.
+    /// Accepts an optional model override passed as `--model` to the CLI.
+    fn grade(&self, prompt: &str, model: Option<&str>) -> Result<String>;
 }
 
 // =========================================================================

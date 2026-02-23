@@ -93,6 +93,24 @@ impl Agent for ClaudeAdapter {
             .map(|s| s.success())
             .unwrap_or(false)
     }
+
+    fn grade(&self, prompt: &str, model: Option<&str>) -> Result<String> {
+        let mut cmd = Command::new("claude");
+        cmd.arg("--print").arg(prompt).stdin(Stdio::null());
+
+        if let Some(m) = model {
+            cmd.arg("--model").arg(m);
+        }
+
+        let output = cmd.output().context("Failed to execute claude command for grading")?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+        if stdout.trim().is_empty() {
+            anyhow::bail!("Grading agent returned empty response");
+        }
+
+        Ok(stdout)
+    }
 }
 
 /// Get the Claude projects directory.

@@ -64,6 +64,7 @@ pub mod fluent;
 pub mod output;
 pub mod parser;
 pub mod prompt;
+pub mod review;
 pub mod streaming;
 
 #[cfg(feature = "yaml")]
@@ -86,6 +87,9 @@ pub use prompt::{prompt, PromptBuilder};
 
 // Output formatting
 pub use output::{OutputConfig, OutputFormatter, OutputMode};
+
+// Review/grading
+pub use review::{grade_stdout, ReviewConfig, ReviewResult};
 
 // Streaming
 pub use streaming::{StreamEvent, StreamHandle};

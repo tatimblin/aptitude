@@ -66,15 +66,16 @@ expect(&tool_calls)
     .tool(Tool::Read)
     .to_be_called();
 
-// From full output (can also assert on stdout)
+// From full output (can also assert on stdout with LLM grading)
 expect(&output)
     .tool(Tool::Read)
     .to_be_called();
 
 expect(&output)
+    .with_grader(grading_agent)
     .stdout()
-    .contains("success")
-    .to_exist();
+    .review("should confirm success")
+    .to_pass();
 ```
 
 ### 3. Chain Assertions
@@ -126,6 +127,14 @@ if !result.passed {
 | `.run()` | Execute and return `Result<Vec<ToolCall>>` |
 | `.run_full()` | Execute and return `Result<ExecutionOutput>` |
 
+### ExecutionExpectation
+
+| Method | Description |
+|--------|-------------|
+| `.tool(tool: Tool)` | Create a `ToolAssertion` for a specific tool |
+| `.stdout()` | Create a `StdoutAssertion` for stdout review |
+| `.with_grader(agent: Arc<dyn Agent>)` | Set the grading agent for stdout review assertions |
+
 ### ToolAssertion
 
 **Builder Methods (chainable):**
@@ -169,25 +178,42 @@ if !result.passed {
 | `.params()` | Get actual parameters of the call as `&serde_json::Value` |
 | `.index()` | Get the call index (1-indexed) |
 
-### StdoutAssertion
+### StdoutAssertion (LLM-Powered Review)
+
+Stdout assertions use an LLM grading agent to evaluate output against natural language criteria.
+A grading agent must be set via `ExecutionExpectation::with_grader()` or `StdoutAssertion::with_grader()`.
 
 **Builder Methods (chainable):**
 
 | Method | Description |
 |--------|-------------|
-| `.contains(s: &str)` | Assert stdout contains substring |
-| `.not_contains(s: &str)` | Assert stdout does NOT contain substring |
-| `.matches(pattern: &str)` | Assert stdout matches regex pattern |
-| `.not_matches(pattern: &str)` | Assert stdout does NOT match regex pattern |
+| `.review(criteria: &str)` | Set natural language criteria for grading |
+| `.with_threshold(n: u32)` | Set minimum score to pass (1-10, default: 7) |
+| `.with_model(model: &str)` | Set model override for the grading agent |
+| `.with_grader(agent: Arc<dyn Agent>)` | Set the agent used for grading |
 
 **Assertion Methods:**
 
 | Method | Description |
 |--------|-------------|
-| `.to_exist()` | Assert stdout exists and matches all constraints (panics) |
-| `.to_be_empty()` | Assert stdout is empty/None (panics) |
+| `.to_pass()` | Assert stdout passes the review criteria (panics on failure) |
 | `.evaluate()` | Non-panicking, returns `AssertionResult` |
-| `.evaluate_empty()` | Non-panicking empty check, returns `AssertionResult` |
+
+**Example:**
+
+```rust
+use aptitude::{expect, AgentHarness, AgentType};
+
+let harness = AgentHarness::new();
+let grader = harness.get_agent(AgentType::Claude).unwrap().clone();
+
+expect(&output)
+    .with_grader(grader)
+    .stdout()
+    .review("should confirm the file was created and be concise")
+    .with_threshold(8)
+    .to_pass();
+```
 
 ### Tool Enum
 

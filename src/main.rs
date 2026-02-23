@@ -338,7 +338,8 @@ fn run_single_test(
     println!();
 
     // Evaluate assertions
-    let results = run_yaml_test(&test, &tool_calls, &raw_result.stdout);
+    let grading_agent = harness.get_agent(agent_type.unwrap_or(AgentType::Claude));
+    let results = run_yaml_test(&test, &tool_calls, &raw_result.stdout, grading_agent);
     let test_passed = print_results(&results);
 
     // Show response if verbose or failed
@@ -474,7 +475,8 @@ fn analyze_session(
     println!();
 
     // Evaluate assertions (stdout not available in analyze mode)
-    let results = run_yaml_test(&test, &tool_calls, &None);
+    let grading_agent = harness.get_agent(agent_type);
+    let results = run_yaml_test(&test, &tool_calls, &None, grading_agent);
     let all_passed = print_results(&results);
 
     if !all_passed {

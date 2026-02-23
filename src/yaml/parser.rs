@@ -67,20 +67,22 @@ pub struct Assertion {
     pub stdout: Option<StdoutConstraints>,
 }
 
-/// Constraints for stdout assertions.
+/// Constraints for stdout assertions (LLM-graded review).
 #[derive(Debug, Deserialize, Clone)]
 pub struct StdoutConstraints {
-    /// Whether stdout should exist (default: true).
-    #[serde(default = "default_true")]
-    pub exists: bool,
-    /// Assert stdout contains this substring.
-    pub contains: Option<String>,
-    /// Assert stdout does NOT contain this substring.
-    pub not_contains: Option<String>,
-    /// Assert stdout matches this regex pattern.
-    pub matches: Option<String>,
-    /// Assert stdout does NOT match this regex pattern.
-    pub not_matches: Option<String>,
+    /// Natural language criteria for grading stdout.
+    pub review: String,
+    /// Minimum score to pass (1-10, default: 7).
+    #[serde(default = "default_threshold")]
+    pub threshold: u32,
+    /// Model to use for grading (passed as `--model` to the grading agent).
+    pub model: Option<String>,
+    /// Agent to use for grading (default: uses the test's agent).
+    pub agent: Option<String>,
+}
+
+fn default_threshold() -> u32 {
+    7
 }
 
 fn default_true() -> bool {
@@ -217,17 +219,33 @@ params:
     fn test_deserialize_stdout_assertion() {
         let yaml = r#"
 stdout:
-  exists: true
-  contains: "success"
-  not_contains: "error"
+  review: "should confirm success and be concise"
+  threshold: 8
+  model: "claude-sonnet-4-20250514"
+  agent: "claude"
 "#;
         let assertion: Assertion = serde_yaml::from_str(yaml).unwrap();
         assert!(assertion.tool.is_none());
         assert!(assertion.stdout.is_some());
         let stdout = assertion.stdout.unwrap();
-        assert!(stdout.exists);
-        assert_eq!(stdout.contains, Some("success".to_string()));
-        assert_eq!(stdout.not_contains, Some("error".to_string()));
+        assert_eq!(stdout.review, "should confirm success and be concise");
+        assert_eq!(stdout.threshold, 8);
+        assert_eq!(stdout.model, Some("claude-sonnet-4-20250514".to_string()));
+        assert_eq!(stdout.agent, Some("claude".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_stdout_assertion_defaults() {
+        let yaml = r#"
+stdout:
+  review: "should say hello"
+"#;
+        let assertion: Assertion = serde_yaml::from_str(yaml).unwrap();
+        let stdout = assertion.stdout.unwrap();
+        assert_eq!(stdout.review, "should say hello");
+        assert_eq!(stdout.threshold, 7);
+        assert!(stdout.model.is_none());
+        assert!(stdout.agent.is_none());
     }
 
     #[test]

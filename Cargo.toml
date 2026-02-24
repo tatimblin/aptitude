@@ -17,8 +17,9 @@ name = "aptitude"
 path = "src/main.rs"
 
 [features]
-default = ["yaml"]
+default = ["yaml", "kiro"]
 yaml = ["dep:serde_yaml"]
+kiro = ["dep:rusqlite"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -31,9 +32,11 @@ regex = "1"
 dirs = "5"
 anyhow = "1"
 walkdir = "2"
-tokio = { version = "1", features = ["process", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["process", "rt-multi-thread", "macros", "io-util"] }
 futures = "0.3"
 async-trait = "0.1"
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+proptest = "1"

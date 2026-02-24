@@ -25,7 +25,10 @@
 
 mod claude;
 mod harness;
+#[cfg(feature = "kiro")]
+mod kiro;
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -66,12 +69,26 @@ impl ExecutionConfig {
 }
 
 /// Raw result from agent execution before normalization.
-#[derive(Debug)]
 pub struct RawExecutionResult {
     /// Path to the session log file, if the agent produces one.
     pub session_log_path: Option<PathBuf>,
     /// Stdout from the agent command.
     pub stdout: Option<String>,
+    /// Opaque agent-specific context passed from `execute()` to `parse_session()`.
+    ///
+    /// Each agent can store its own session-recovery data here (e.g., database
+    /// query parameters) without polluting the shared struct with agent-specific fields.
+    pub agent_context: Option<Box<dyn Any + Send>>,
+}
+
+impl std::fmt::Debug for RawExecutionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RawExecutionResult")
+            .field("session_log_path", &self.session_log_path)
+            .field("stdout", &self.stdout)
+            .field("agent_context", &self.agent_context.as_ref().map(|_| "..."))
+            .finish()
+    }
 }
 
 /// The core trait that all agent adapters must implement.
@@ -97,6 +114,14 @@ pub trait Agent: Send + Sync {
     ///
     /// Maps agent-specific tool names to canonical names.
     fn tool_mapping(&self) -> &ToolNameMapping;
+
+    /// Whether this agent supports streaming execution via session file tailing.
+    ///
+    /// Agents that return `true` can be used with `execute_streaming()`.
+    /// Default is `false` — agents opt in to streaming support.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
 
     /// Check if this agent is available on the system.
     fn is_available(&self) -> bool;

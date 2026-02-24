@@ -84,8 +84,7 @@ impl Default for OutputConfig {
 
 /// Detect whether the terminal supports OSC 8 hyperlinks.
 ///
-/// Checks a known-good allowlist of terminal emulators via `TERM_PROGRAM`,
-/// requires stdout to be a TTY, and disables inside tmux/screen where
+/// Requires stdout to be a TTY and disables inside tmux/screen where
 /// passthrough is unreliable.
 fn detect_hyperlinks() -> bool {
     if !std::io::stdout().is_terminal() {
@@ -334,17 +333,6 @@ impl OutputFormatter {
     }
 }
 
-/// Extract HH:MM:SS from an RFC3339 timestamp string.
-/// Falls back to "??:??:??" if the string is too short.
-fn extract_time(ts: &str) -> &str {
-    // RFC3339: "2024-01-19T12:00:00Z" — time starts at index 11, 8 chars
-    if ts.len() >= 19 {
-        &ts[11..19]
-    } else {
-        "??:??:??"
-    }
-}
-
 /// Convert a filesystem path to a `file://` URI.
 ///
 /// Resolves the path to an absolute path via `canonicalize` (falling back
@@ -354,6 +342,26 @@ fn path_to_file_uri(path: &Path) -> String {
     let absolute = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let path_str = absolute.to_string_lossy().replace(' ', "%20");
     format!("file://{path_str}")
+}
+
+/// Extract HH:MM:SS from an RFC3339 timestamp string.
+/// Falls back to "??:??:??" if the string is too short or doesn't contain a time.
+fn extract_time(ts: &str) -> &str {
+    // Handle RFC3339 formats:
+    // - "2024-01-19T12:00:00Z" — time starts at index 11
+    // - "2026-02-23T21:20:31.146289-08:00" — time starts at index 11
+    if let Some(t_pos) = ts.find('T') {
+        let time_part = &ts[t_pos + 1..];
+        if time_part.len() >= 8 {
+            return &time_part[..8];
+        }
+    }
+    // Fallback for old format without T
+    if ts.len() >= 19 {
+        &ts[11..19]
+    } else {
+        "??:??:??"
+    }
 }
 
 #[cfg(test)]

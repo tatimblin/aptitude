@@ -1,0 +1,17 @@
+name: "Kiro - Increment number and report"
+agent: kiro
+prompt: "Read counter.txt, run increment.sh to increment the number, and tell me the new value."
+
+assertions:
+  - tool: Read
+    called: true
+    params:
+      operations: ".*counter\\.txt.*"
+
+  - tool: Bash
+    called: true
+    params:
+      command: ".*increment\\.sh.*"
+
+  - tool: Bash
+    called_after: Read

@@ -10,6 +10,8 @@ use std::sync::Arc;
 use crate::parser::ToolCall;
 use crate::streaming::{self, StreamHandle};
 use super::claude::ClaudeAdapter;
+#[cfg(feature = "kiro")]
+use super::kiro::KiroAdapter;
 use super::{Agent, ExecutionConfig, ToolNameMapping};
 
 /// Supported agent types.
@@ -17,9 +19,8 @@ use super::{Agent, ExecutionConfig, ToolNameMapping};
 pub enum AgentType {
     #[default]
     Claude,
-    // Future agents:
-    // Aider,
-    // Cursor,
+    #[cfg(feature = "kiro")]
+    Kiro,
 }
 
 impl AgentType {
@@ -27,8 +28,8 @@ impl AgentType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "claude" | "claude-code" => Some(AgentType::Claude),
-            // "aider" => Some(AgentType::Aider),
-            // "cursor" => Some(AgentType::Cursor),
+            #[cfg(feature = "kiro")]
+            "kiro" => Some(AgentType::Kiro),
             _ => None,
         }
     }
@@ -37,8 +38,8 @@ impl AgentType {
     pub fn as_str(&self) -> &'static str {
         match self {
             AgentType::Claude => "claude",
-            // AgentType::Aider => "aider",
-            // AgentType::Cursor => "cursor",
+            #[cfg(feature = "kiro")]
+            AgentType::Kiro => "kiro",
         }
     }
 }
@@ -86,6 +87,8 @@ impl AgentHarness {
 
         // Register built-in agents
         agents.insert(AgentType::Claude, Arc::new(ClaudeAdapter::new()));
+        #[cfg(feature = "kiro")]
+        agents.insert(AgentType::Kiro, Arc::new(KiroAdapter::new()));
 
         Self {
             agents,
@@ -250,3 +253,80 @@ impl Default for AgentHarness {
         Self::new()
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_type_from_str_unknown() {
+        assert_eq!(AgentType::from_str("unknown"), None);
+        assert_eq!(AgentType::from_str(""), None);
+    }
+
+    #[test]
+    fn test_harness_registers_claude() {
+        let harness = AgentHarness::new();
+        let claude = harness.get_agent(AgentType::Claude).expect("claude should be registered");
+        assert_eq!(claude.name(), "claude");
+        assert!(harness.registered_agents().contains(&"claude"));
+    }
+
+    #[cfg(feature = "kiro")]
+    mod kiro_tests {
+        use super::*;
+
+        #[test]
+        fn test_agent_type_from_str_kiro_case_insensitive() {
+            for name in &["kiro", "KIRO", "Kiro", "KiRo"] {
+                assert_eq!(AgentType::from_str(name), Some(AgentType::Kiro), "failed for {:?}", name);
+            }
+        }
+
+        #[test]
+        fn test_agent_type_as_str_kiro() {
+            assert_eq!(AgentType::Kiro.as_str(), "kiro");
+        }
+
+        #[test]
+        fn test_harness_registers_kiro() {
+            let harness = AgentHarness::new();
+            let kiro = harness.get_agent(AgentType::Kiro).expect("kiro should be registered");
+            assert_eq!(kiro.name(), "kiro");
+            assert!(harness.registered_agents().contains(&"kiro"));
+        }
+
+        #[test]
+        fn test_execute_returns_error_when_agent_unavailable() {
+            let harness = AgentHarness::new();
+            let agent = harness.get_agent(AgentType::Kiro).unwrap();
+
+            if !agent.is_available() {
+                let config = ExecutionConfig::new();
+                let result = harness.execute(Some(AgentType::Kiro), "test prompt", config);
+                let err_msg = result.unwrap_err().to_string();
+                assert!(
+                    err_msg.contains("not available"),
+                    "Expected 'not available' error, got: {}", err_msg
+                );
+            }
+        }
+
+        #[test]
+        fn test_grade_returns_error_when_agent_unavailable() {
+            let harness = AgentHarness::new();
+            let agent = harness.get_agent(AgentType::Kiro).unwrap();
+
+            if !agent.is_available() {
+                let result = harness.grade(Some(AgentType::Kiro), "test prompt", None);
+                let err_msg = result.unwrap_err().to_string();
+                assert!(
+                    err_msg.contains("not available"),
+                    "Expected 'not available' error, got: {}", err_msg
+                );
+            }
+        }
+    }
+}
+

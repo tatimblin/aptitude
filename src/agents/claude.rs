@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use tokio::process::Command as TokioCommand;
 
 use crate::parser::{parse_jsonl_file, ToolCall};
 use super::{Agent, ExecutionConfig, RawExecutionResult, ToolNameMapping};
@@ -72,6 +71,7 @@ impl Agent for ClaudeAdapter {
         Ok(RawExecutionResult {
             session_log_path: Some(session_log_path),
             stdout,
+            agent_context: None,
         })
     }
 
@@ -85,6 +85,10 @@ impl Agent for ClaudeAdapter {
 
     fn tool_mapping(&self) -> &ToolNameMapping {
         &self.mapping
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
     }
 
     fn is_available(&self) -> bool {
@@ -115,23 +119,6 @@ impl Agent for ClaudeAdapter {
         Ok(stdout)
     }
 
-    async fn grade_async(&self, prompt: &str, model: Option<&str>) -> Result<String> {
-        let mut cmd = TokioCommand::new("claude");
-        cmd.arg("--print").arg(prompt).stdin(Stdio::null());
-
-        if let Some(m) = model {
-            cmd.arg("--model").arg(m);
-        }
-
-        let output = cmd.output().await.context("Failed to execute claude command for grading")?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-
-        if stdout.trim().is_empty() {
-            anyhow::bail!("Grading agent returned empty response");
-        }
-
-        Ok(stdout)
-    }
 }
 
 /// Get the Claude projects directory.

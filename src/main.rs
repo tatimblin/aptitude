@@ -319,29 +319,47 @@ fn run_single_test(
     let formatter = OutputFormatter::new(OutputConfig::verbose())
         .with_workdir(canonical_workdir.clone());
 
-    // Execute in streaming mode
-    let handle = harness.execute_streaming(agent_type, &test.prompt, config)?;
+    // Dispatch based on agent capability, not identity
+    let resolved_type = agent_type.unwrap_or(AgentType::Claude);
+    let agent = harness.get_agent(resolved_type)
+        .ok_or_else(|| anyhow::anyhow!("Agent not found: {:?}", resolved_type))?;
 
-    println!("Tool calls (live):");
-    println!("{}", "─".repeat(40));
+    let (tool_calls, stdout, session_log_path) = if agent.supports_streaming() {
+        let handle = harness.execute_streaming(agent_type, &test.prompt, config)?;
 
-    let tool_calls = drain_stream_events(&handle, &mapping, &formatter, verbose);
+        println!("Tool calls (live):");
+        println!("{}", "─".repeat(40));
 
-    println!("{}", "─".repeat(40));
+        let tool_calls = drain_stream_events(&handle, &mapping, &formatter, verbose);
 
-    // Wait for the process to finish
-    let raw_result = handle.wait()?;
+        println!("{}", "─".repeat(40));
+
+        let raw_result = handle.wait()?;
+        (tool_calls, raw_result.stdout, raw_result.session_log_path)
+    } else {
+        println!("Tool calls:");
+        println!("{}", "─".repeat(40));
+
+        let output = harness.execute(agent_type, &test.prompt, config)?;
+        let tool_calls = output.result.tool_calls.clone();
+
+        formatter.print_tool_calls(&tool_calls, true);
+
+        println!("{}", "─".repeat(40));
+
+        (tool_calls, output.stdout, output.session_log_path)
+    };
 
     println!();
     println!("{} finished. Evaluating assertions...", agent_name);
-    if let Some(log_path) = &raw_result.session_log_path {
+    if let Some(log_path) = &session_log_path {
         println!("Session log: {}", formatter.format_session_path(log_path, verbose));
     }
     println!();
 
     // Evaluate assertions
     let grading_agent = harness.get_agent(agent_type.unwrap_or(AgentType::Claude));
-    let results = run_yaml_test(&test, &tool_calls, &raw_result.stdout, grading_agent);
+    let results = run_yaml_test(&test, &tool_calls, &stdout, grading_agent);
     let test_passed = print_results(&results);
 
     // Show response if verbose or failed
@@ -352,7 +370,7 @@ fn run_single_test(
     };
     let out_formatter = OutputFormatter::new(output_config)
         .with_workdir(canonical_workdir);
-    out_formatter.print_response(raw_result.stdout.as_deref(), test_passed);
+    out_formatter.print_response(stdout.as_deref(), test_passed);
 
     Ok(test_passed)
 }
@@ -520,22 +538,40 @@ fn log_command(
     let formatter = OutputFormatter::new(OutputConfig::verbose())
         .with_workdir(canonical_workdir);
 
-    println!("Tool calls (live):");
-    println!("{}", "─".repeat(60));
+    // Dispatch based on agent capability
+    let resolved_type = cli_agent.unwrap_or(AgentType::Claude);
+    let agent = harness.get_agent(resolved_type)
+        .ok_or_else(|| anyhow::anyhow!("Agent not found: {:?}", resolved_type))?;
 
-    // Execute in streaming mode
-    let handle = harness.execute_streaming(cli_agent, prompt, config)?;
+    let (tool_calls, stdout, session_log_path) = if agent.supports_streaming() {
+        println!("Tool calls (live):");
+        println!("{}", "─".repeat(60));
 
-    let tool_calls = drain_stream_events(&handle, &mapping, &formatter, false);
+        let handle = harness.execute_streaming(cli_agent, prompt, config)?;
+        let tool_calls = drain_stream_events(&handle, &mapping, &formatter, false);
 
-    println!("{}", "─".repeat(60));
+        println!("{}", "─".repeat(60));
+
+        let raw_result = handle.wait()?;
+        (tool_calls, raw_result.stdout, raw_result.session_log_path)
+    } else {
+        println!("Tool calls:");
+        println!("{}", "─".repeat(60));
+
+        let output = harness.execute(cli_agent, prompt, config)?;
+        let tool_calls = output.result.tool_calls.clone();
+
+        formatter.print_tool_calls(&tool_calls, true);
+
+        println!("{}", "─".repeat(60));
+
+        (tool_calls, output.stdout, output.session_log_path)
+    };
+
     println!();
     println!("Total: {} tool call(s)", tool_calls.len());
 
-    // Wait for the process to finish and get stdout
-    let raw_result = handle.wait()?;
-
-    if let Some(stdout) = &raw_result.stdout {
+    if let Some(stdout) = &stdout {
         if !stdout.trim().is_empty() {
             println!();
             println!("Response:");
@@ -543,7 +579,7 @@ fn log_command(
         }
     }
 
-    if let Some(log_path) = &raw_result.session_log_path {
+    if let Some(log_path) = &session_log_path {
         println!();
         println!("Session log: {}", formatter.format_session_path(log_path, false));
     }

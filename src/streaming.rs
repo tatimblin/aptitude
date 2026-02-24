@@ -185,6 +185,7 @@ fn orchestrate(
     Ok(RawExecutionResult {
         session_log_path,
         stdout,
+        agent_context: None,
     })
 }
 

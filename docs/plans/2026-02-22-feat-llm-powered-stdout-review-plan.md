@@ -1,7 +1,7 @@
 ---
 title: "feat: Replace brittle stdout assertions with LLM-powered review"
 type: feat
-status: active
+status: completed
 date: 2026-02-22
 ---
 

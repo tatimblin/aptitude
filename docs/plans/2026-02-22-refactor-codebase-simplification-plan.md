@@ -1,7 +1,7 @@
 ---
 title: "Refactor: Codebase Simplification"
 type: refactor
-status: active
+status: completed
 date: 2026-02-22
 ---
 

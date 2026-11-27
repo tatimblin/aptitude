@@ -160,16 +160,23 @@ assertions:
 
 ### Parameter Matching
 
+Each pattern is tried as a **regex** first (unanchored: it may match anywhere in
+the value), then as a **glob** if it isn't a valid regex (anchored; `*` also
+matches `/`), and finally as an **exact** string if it is neither.
+
 ```yaml
-# Glob pattern
+# Glob pattern (invalid regex, so matched as a glob; matches /abs/path/.env)
 file_path: "*.env"
 
 # Regex pattern
 command: "cat.*\\.env|grep.*secret"
 
-# Exact match
+# Plain string (valid regex, so it matches as a substring; use ^...$ for exact)
 url: "https://api.example.com"
 ```
+
+Caveat: a pattern like `src/*.rs` is a valid regex, so it is treated as a regex
+rather than a glob (and does not match `src/main.rs`).
 
 ## Documentation
 

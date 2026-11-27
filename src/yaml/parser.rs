@@ -45,7 +45,8 @@ pub struct Assertion {
     /// Whether this tool should be called (default: true).
     #[serde(default = "default_true")]
     pub called: bool,
-    /// Parameter patterns to match (glob, regex, or exact).
+    /// Parameter patterns to match. Each is tried as an unanchored regex, then
+    /// (if not a valid regex) as an anchored glob, then as an exact string.
     pub params: Option<HashMap<String, String>>,
     /// Assert this tool is called after another tool.
     pub called_after: Option<String>,

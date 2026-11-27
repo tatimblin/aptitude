@@ -116,7 +116,11 @@ fn main() -> Result<()> {
 
             if path.is_file() {
                 // Single file mode - run directly
-                run_single_test(&harness, &path, verbose, workdir.as_deref(), agent_type)?;
+                let passed =
+                    run_single_test(&harness, &path, verbose, workdir.as_deref(), agent_type)?;
+                if !passed {
+                    std::process::exit(1);
+                }
             } else {
                 // Directory mode - use discovery
                 let (config, config_dir) = load_or_discover_config(&path, config_path.as_deref());

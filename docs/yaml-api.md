@@ -103,15 +103,16 @@ aptitude analyze test.yaml session.jsonl
 
 | Field | Description |
 |-------|-------------|
-| `params` | Map of parameter names to regex patterns |
+| `params` | Map of parameter names to regex, glob, or exact patterns |
 
-Parameters support regex matching with exact match fallback:
+Parameters are matched as regex first, then glob, then exact (see
+[Parameter Matching Rules](#parameter-matching-rules)):
 
 ```yaml
 params:
-  file_path: "*.env"              # Glob pattern
-  command: "cat.*\\.env"          # Regex pattern
-  url: "https://api.example.com"  # Exact match
+  file_path: "*.env"              # Glob (invalid regex), matches /abs/path/.env
+  command: "cat.*\\.env"          # Regex pattern (unanchored)
+  url: "https://api.example.com"  # Valid regex, so substring match
   file_path: "^/exact/path$"      # Anchored regex
 ```
 
@@ -276,13 +277,25 @@ aptitude log "Prompt" -w /workdir --agent claude
 
 ## Parameter Matching Rules
 
-Parameters use regex matching with exact match fallback:
+Each parameter pattern is tried in this order:
 
-1. **Glob patterns** - `*.env` matches any file ending in `.env`
-2. **Regex patterns** - `cat.*\.env` matches `cat .env`, `cat foo.env`, etc.
-3. **Alternation** - `cat|grep` matches either command
-4. **Anchors** - `^/exact/path$` for strict matching
-5. **Exact match** - Falls back to exact string comparison if invalid regex
+1. **Regex** - if the pattern compiles as a regex, it is used **unanchored** (it
+   matches if found anywhere in the value). `cat.*\.env` matches `cat .env`,
+   `cd x && cat foo.env`, etc. Alternation (`cat|grep`) works. Use anchors
+   (`^/exact/path$`) for strict matching.
+2. **Glob** - if the pattern is not a valid regex, it is tried as a glob matched
+   against the **whole** value. `*` matches any characters including `/`, `?`
+   matches one character, `[...]` is a character class. So `*.env` matches
+   `/Users/me/proj/.env`, and `*amazon.com/*` matches `https://aws.amazon.com/health`.
+3. **Exact** - if the pattern is neither a valid regex nor a valid glob, the value
+   must equal it exactly.
+
+Caveat: globs only apply when the pattern is an invalid regex, which usually means
+it starts with `*` or `?`. A pattern like `src/*.rs` is a valid regex
+(`/*` = zero or more slashes, `.` = any one character) and is matched as a
+regex, not a glob, so it does **not** match `src/main.rs`. If you want
+glob semantics there, write `*src/*.rs` or use an explicit regex such as
+`^src/[^/]*\.rs$`.
 
 Special regex characters must be escaped with `\`:
 - `.` → `\.` for literal dot

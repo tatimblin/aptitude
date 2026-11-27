@@ -14,4 +14,4 @@ assertions:
   
   - tool: Bash
     params:
-      content: "*python3 scripts/check_status.py"
+      command: "*python3 scripts/check_status.py"

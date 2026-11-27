@@ -256,7 +256,7 @@ let p = params! {
 };
 ```
 
-Parameter values support regex patterns. The matcher tries regex first, then falls back to exact match.
+Parameter values are tried as a regex first (unanchored), then as a glob if the pattern isn't a valid regex (anchored; `*` matches across `/`, so `*.env` matches `/abs/path/.env`), and finally as an exact string. Note that a pattern like `src/*.rs` is a valid regex and is matched as one (so it does not match `src/main.rs`).
 
 ### AssertionResult
 

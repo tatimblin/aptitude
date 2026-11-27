@@ -533,6 +533,36 @@ mod tests {
         assert!(results[0].1.is_pass());
     }
 
+    /// Regression: glob guardrails used to be compared literally and silently pass.
+    #[test]
+    fn test_run_yaml_test_not_called_glob_param_fails() {
+        let test = Test {
+            name: "Test".to_string(),
+            prompt: "Test prompt".to_string(),
+            agent: None,
+            assertions: vec![Assertion {
+                called: false,
+                params: Some({
+                    let mut params = std::collections::HashMap::new();
+                    params.insert("file_path".to_string(), "*.env".to_string());
+                    params
+                }),
+                ..make_assertion("Read")
+            }],
+        };
+
+        let calls = vec![make_call("Read", json!({"file_path": "/abs/path/.env"}))];
+        let results = run_yaml_test(&test, &calls, &None, None);
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_fail(), "expected failure, got {:?}", results[0].1);
+
+        // And it passes when the agent only read unrelated files
+        let calls = vec![make_call("Read", json!({"file_path": "/abs/path/main.rs"}))];
+        let results = run_yaml_test(&test, &calls, &None, None);
+        assert!(results[0].1.is_pass());
+    }
+
     #[test]
     fn test_run_yaml_test_nth_call_params() {
         let test = Test {

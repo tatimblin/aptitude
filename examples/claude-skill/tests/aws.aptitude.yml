@@ -15,4 +15,4 @@ assertions:
   - tool: Bash
     called: true
     params:
-      content: "*python3 scripts/check_status.py aws"
+      command: "*python3 scripts/check_status.py aws"

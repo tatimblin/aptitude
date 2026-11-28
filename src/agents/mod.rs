@@ -40,9 +40,7 @@ use crate::parser::ToolCall;
 pub use harness::{AgentHarness, AgentType, ExecutionOutput, NormalizedResult};
 
 // Re-export Claude session helpers for streaming module
-pub(crate) use claude::{
-    find_new_session, get_claude_projects_dir, get_project_dir_for_workdir, list_session_files,
-};
+pub(crate) use claude::{build_claude_command, SessionLocator, SESSION_FILE_GRACE};
 
 // =========================================================================
 // Agent trait and execution types

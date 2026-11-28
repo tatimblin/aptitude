@@ -34,8 +34,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::agents::{
-    find_new_session, get_claude_projects_dir, get_project_dir_for_workdir, list_session_files,
-    ExecutionConfig, RawExecutionResult,
+    build_claude_command, ExecutionConfig, RawExecutionResult, SessionLocator, SESSION_FILE_GRACE,
 };
 use crate::parser::{parse_line_internal, ToolCall};
 
@@ -89,26 +88,21 @@ impl StreamHandle {
 
 /// Start streaming execution of Claude with the given prompt.
 ///
-/// Spawns Claude as a child process and tails the session log file,
-/// emitting `StreamEvent`s through the returned handle's receiver.
+/// Spawns Claude as a child process pinned to a fresh session ID and tails
+/// that session's log file, emitting `StreamEvent`s through the returned
+/// handle's receiver.
 pub fn execute_streaming(
     prompt: &str,
     config: &ExecutionConfig,
 ) -> Result<StreamHandle> {
-    // Snapshot existing session files before spawning
-    let claude_dir = get_claude_projects_dir()?;
-    let project_dir = get_project_dir_for_workdir(&claude_dir, &config.working_dir)?;
-    let existing_sessions = list_session_files(&project_dir)?;
+    // Build the command up front so argument errors (e.g. --resume) surface
+    // immediately; the orchestrator thread spawns it.
+    let (cmd, locator) = build_claude_command(prompt, config)?;
 
     let (sender, receiver) = mpsc::channel::<StreamEvent>();
 
-    // Build the command but don't run it yet — the orchestrator thread will spawn it
-    let prompt = prompt.to_string();
-    let config = config.clone();
-    let project_dir = project_dir.clone();
-
     let join_handle = thread::spawn(move || -> Result<RawExecutionResult> {
-        orchestrate(prompt, config, project_dir, existing_sessions, sender)
+        orchestrate(cmd, locator, sender)
     });
 
     Ok(StreamHandle {
@@ -119,24 +113,10 @@ pub fn execute_streaming(
 
 /// Orchestrator: spawns claude, spawns watcher, waits for completion.
 fn orchestrate(
-    prompt: String,
-    config: ExecutionConfig,
-    project_dir: PathBuf,
-    existing_sessions: Vec<PathBuf>,
+    mut cmd: Command,
+    locator: SessionLocator,
     sender: mpsc::Sender<StreamEvent>,
 ) -> Result<RawExecutionResult> {
-    // Spawn claude process (non-blocking)
-    let mut cmd = Command::new("claude");
-    cmd.arg("--print").arg(&prompt).stdin(Stdio::null());
-
-    if let Some(dir) = &config.working_dir {
-        cmd.current_dir(dir);
-    }
-
-    for arg in &config.extra_args {
-        cmd.arg(arg);
-    }
-
     let child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -149,16 +129,10 @@ fn orchestrate(
     // Spawn the watcher thread
     let watcher_sender = sender.clone();
     let watcher_exited = Arc::clone(&process_exited);
-    let watcher_project_dir = project_dir.clone();
-    let watcher_existing = existing_sessions.clone();
+    let watcher_locator = locator.clone();
 
     let watcher_handle = thread::spawn(move || {
-        watch_for_session(
-            watcher_project_dir,
-            watcher_existing,
-            watcher_sender,
-            watcher_exited,
-        )
+        watch_for_session(watcher_locator, watcher_sender, watcher_exited)
     });
 
     // Wait for the claude process to complete
@@ -172,42 +146,37 @@ fn orchestrate(
         .join()
         .map_err(|_| anyhow::anyhow!("Watcher thread panicked"))?;
 
+    let session_log_path =
+        session_path.ok_or_else(|| locator.missing_error(&output.status, &output.stderr))?;
+
     // Capture stdout
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stdout = if stdout.is_empty() { None } else { Some(stdout) };
 
-    // If the watcher didn't find a session, try once more from the orchestrator
-    let session_log_path = match session_path {
-        Some(p) => Some(p),
-        None => find_new_session(&project_dir, &existing_sessions).ok(),
-    };
-
     Ok(RawExecutionResult {
-        session_log_path,
+        session_log_path: Some(session_log_path),
         stdout,
         agent_context: None,
     })
 }
 
-/// Watcher: polls for a new session file, then tails it.
+/// Watcher: polls for this run's exact session file, then tails it.
+///
+/// Returns `None` if the file has not appeared within `SESSION_FILE_GRACE`
+/// after the process exits.
 fn watch_for_session(
-    project_dir: PathBuf,
-    existing_sessions: Vec<PathBuf>,
+    locator: SessionLocator,
     sender: mpsc::Sender<StreamEvent>,
     process_exited: Arc<AtomicBool>,
 ) -> Option<PathBuf> {
-    // Poll for the new session file to appear
     let session_path = loop {
-        if let Ok(path) = find_new_session(&project_dir, &existing_sessions) {
+        if let Some(path) = locator.locate() {
             break path;
         }
 
         if process_exited.load(Ordering::Acquire) {
-            // Process exited before we found a session — try one last time
-            if let Ok(path) = find_new_session(&project_dir, &existing_sessions) {
-                break path;
-            }
-            return None;
+            // Process exited before the file appeared — allow a short grace period.
+            break locator.wait_for(SESSION_FILE_GRACE)?;
         }
 
         thread::sleep(Duration::from_millis(200));
@@ -385,23 +354,37 @@ mod tests {
     #[test]
     fn test_watch_detects_new_file() {
         let dir = TempDir::new().unwrap();
-        let project_dir = dir.path().to_path_buf();
+        let projects_dir = dir.path().to_path_buf();
+        let workdir = PathBuf::from("/w/fresh_project.v1");
+        let session_id = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b".to_string();
+
+        // A pre-existing log from a previous run must not be picked up.
+        let project_dir = projects_dir.join("-w-fresh-project-v1");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("previous-run.jsonl"),
+            format!("{}\n", make_tool_use_line("Bash", r#"{"command":"ls"}"#)),
+        )
+        .unwrap();
+
+        let locator = SessionLocator {
+            projects_dir: projects_dir.clone(),
+            workdir,
+            session_id: session_id.clone(),
+        };
 
         let process_exited = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
-
-        let watch_dir = project_dir.clone();
         let watch_exited = Arc::clone(&process_exited);
 
-        let watch_handle = thread::spawn(move || {
-            watch_for_session(watch_dir, vec![], sender, watch_exited)
-        });
+        let watch_handle =
+            thread::spawn(move || watch_for_session(locator, sender, watch_exited));
 
         // Give watcher time to start polling
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(300));
 
-        // Create a .jsonl file
-        let session_file = project_dir.join("test-session.jsonl");
+        // Create this run's session file
+        let session_file = project_dir.join(format!("{}.jsonl", session_id));
         let line = make_tool_use_line("Read", r#"{"file_path":"test.txt"}"#);
         std::fs::write(&session_file, format!("{}\n", line)).unwrap();
 
@@ -412,20 +395,37 @@ mod tests {
         process_exited.store(true, Ordering::Release);
 
         let result = watch_handle.join().unwrap();
-        assert!(result.is_some(), "Expected session path to be found");
+        assert_eq!(result, Some(session_file));
 
         let events: Vec<_> = receiver.iter().collect();
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, StreamEvent::SessionDetected(_))),
-            "Expected SessionDetected event"
-        );
         assert!(
             events
                 .iter()
                 .any(|e| matches!(e, StreamEvent::ToolCall(tc) if tc.name == "Read")),
             "Expected ToolCall event"
         );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolCall(tc) if tc.name == "Bash")),
+            "Previous run's tool calls must not appear"
+        );
+    }
+
+    #[test]
+    fn test_watch_returns_none_when_file_never_appears() {
+        let dir = TempDir::new().unwrap();
+        let project_dir = dir.path().join("-w-x");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("decoy.jsonl"), "{}\n").unwrap();
+
+        let locator = SessionLocator {
+            projects_dir: dir.path().to_path_buf(),
+            workdir: PathBuf::from("/w/x"),
+            session_id: "11111111-2222-4333-8444-555555555555".to_string(),
+        };
+        let (sender, _receiver) = mpsc::channel();
+        let exited = Arc::new(AtomicBool::new(true));
+        assert!(watch_for_session(locator, sender, exited).is_none());
     }
 }
